@@ -38,28 +38,51 @@ User (Operator)
 
 ### Installation
 
+**Automated Setup (Recommended):**
+
 ```bash
 # Clone with submodules
 git clone --recurse-submodules https://github.com/anh0001/ranger-llm-ui.git
 cd ranger-llm-ui
 
-# Initialize submodule if needed
-git submodule update --init
-
-# Install dependencies
-pip install -r requirements.txt
-pip install -e ros-technician-cli/
-pip install -e .
+# Run the automated setup script
+./scripts/setup_env.sh
 ```
 
-Set up environment variables:
+The setup script will:
+- ✓ Create an isolated Python user environment
+- ✓ Install all Python dependencies
+- ✓ Install ROSA (ros-technician-cli) submodule
+- ✓ Install ROS 2 dependencies via rosdep
+- ✓ Build ROS 2 packages (ros2_numpy, ranger_llm_ui)
+- ✓ Verify all imports
+
+After installation, source the environment in each terminal:
 ```bash
-# Create .env file
+export PYTHONUSERBASE="$HOME/.local/ranger_llm_ui_py310"
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+```
+
+Or add a convenient alias to your `~/.bashrc`:
+```bash
+echo 'alias ranger_setup="export PYTHONUSERBASE=$HOME/.local/ranger_llm_ui_py310 && source /opt/ros/humble/setup.bash && source $(pwd)/install/setup.bash"' >> ~/.bashrc
+```
+
+**Configure LLM Provider:**
+
+Create a `.env` file for API keys:
+```bash
+# For OpenAI (default)
 echo "OPENAI_API_KEY=your_api_key_here" > .env
 
 # Or for Ollama (local models):
 echo "LLM_PROVIDER=ollama" >> .env
 echo "OLLAMA_BASE_URL=http://localhost:11434" >> .env
+
+# Or for Anthropic (Claude):
+echo "LLM_PROVIDER=anthropic" >> .env
+echo "ANTHROPIC_API_KEY=your_api_key_here" >> .env
 ```
 
 ### Running
