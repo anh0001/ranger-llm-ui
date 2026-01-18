@@ -374,8 +374,13 @@ class RangerUINode:
         logger.info("Shutting down Ranger LLM UI...")
 
         if self._node is not None and ROS_AVAILABLE:
-            self._node.destroy_node()
-            rclpy.shutdown()
+            try:
+                # Only shutdown if context is still valid
+                if rclpy.ok():
+                    self._node.destroy_node()
+                    rclpy.shutdown()
+            except Exception as e:
+                logger.warning(f"Error during shutdown: {e}")
 
         logger.info("Shutdown complete")
 
