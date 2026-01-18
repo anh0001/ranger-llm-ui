@@ -246,22 +246,28 @@ class RangerUINode:
     def create_ui(self) -> gr.Blocks:
         """Create the Gradio UI interface."""
 
+        # Get path to robot image
+        assets_dir = Path(__file__).parent / "assets"
+        robot_image_path = assets_dir / "robot_ranger_garden.webp"
+
         with gr.Blocks(
             title="Ranger Garden Assistant",
         ) as demo:
             gr.Markdown(
                 """
                 # Ranger Garden Assistant
-                Control the Ranger robot using natural language commands.
-
-                **Example commands:**
-                - "Move forward 1 meter"
-                - "Turn left 90 degrees"
-                - "Check battery level"
-                - "What's your current position?"
-                - "Stop"
                 """
             )
+            
+            # Display robot image
+            if robot_image_path.exists():
+                gr.Image(
+                    value=str(robot_image_path),
+                    label=None,
+                    show_label=False,
+                    container=False,
+                    height=200,
+                )
 
             with gr.Row():
                 # Main chat interface (left column)
@@ -274,7 +280,7 @@ class RangerUINode:
                     with gr.Row():
                         msg = gr.Textbox(
                             label="Command",
-                            placeholder="Type a command (e.g., 'move forward 1 meter')",
+                            placeholder="Type a command like 'move forward 1 meter'",
                             scale=4,
                         )
                         submit_btn = gr.Button("Send", variant="primary", scale=1)
