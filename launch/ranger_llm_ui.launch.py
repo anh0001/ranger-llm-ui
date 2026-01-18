@@ -28,7 +28,7 @@ def generate_launch_description():
 
     llm_model_arg = DeclareLaunchArgument(
         'llm_model',
-        default_value='',
+        default_value=EnvironmentVariable('LLM_MODEL', default_value=''),
         description='LLM model name (empty for provider default)'
     )
 

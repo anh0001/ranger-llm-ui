@@ -229,11 +229,11 @@ class RangerUINode:
         """Create the Gradio UI interface."""
 
         with gr.Blocks(
-            title="Ranger Robot Control"
+            title="Ranger Garden Assistant",
         ) as demo:
             gr.Markdown(
                 """
-                # Ranger Robot Control
+                # Ranger Garden Assistant
                 Control the Ranger robot using natural language commands.
 
                 **Example commands:**
@@ -422,9 +422,12 @@ def main():
 
     args = parser.parse_args()
 
+    # Convert empty model string to None (use provider default)
+    model_name = args.model if args.model else None
+
     node = RangerUINode(
         llm_provider=args.provider,
-        model_name=args.model,
+        model_name=model_name,
         server_port=args.port,
         share=args.share,
         simple_mode=args.simple,
