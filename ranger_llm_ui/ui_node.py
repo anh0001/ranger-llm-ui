@@ -389,18 +389,12 @@ class RangerUINode:
         # Create and launch UI
         demo = self.create_ui()
 
-        # CSS to hide Gradio footer
-        css = """
-        footer {display: none !important;}
-        """
-
         try:
             demo.launch(
                 server_name="0.0.0.0",
                 server_port=self.server_port,
                 share=self.share,
                 show_error=True,
-                css=css,
             )
         except KeyboardInterrupt:
             logger.info("Shutting down...")
