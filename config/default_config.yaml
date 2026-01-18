@@ -61,6 +61,23 @@ ros:
     odom: /odom
     battery_state: /battery_state
 
+# Camera Configuration
+camera:
+  # Image resolution for LLM consumption (reduced defaults for token efficiency)
+  max_width: 320
+  max_height: 240
+
+  # JPEG compression quality (10-100, higher = better quality but more tokens)
+  # Recommended: 70-80 for good balance
+  quality: 75
+
+  # Image format: "jpeg" (smaller, lossy) or "png" (larger, lossless)
+  # JPEG is strongly recommended to reduce token usage by 85-92%
+  format: jpeg
+
+  # Default camera topic
+  topic: /camera/image_raw
+
 # Logging Configuration
 logging:
   # Log level: DEBUG, INFO, WARNING, ERROR

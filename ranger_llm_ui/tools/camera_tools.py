@@ -38,6 +38,17 @@ except ImportError:
 DEFAULT_CAMERA_TOPIC = "/camera/image_raw"
 
 
+def _get_camera_config():
+    """Get camera configuration from environment variables."""
+    return {
+        "max_width": int(os.getenv("CAMERA_IMAGE_MAX_WIDTH", "320")),
+        "max_height": int(os.getenv("CAMERA_IMAGE_MAX_HEIGHT", "240")),
+        "quality": int(os.getenv("CAMERA_IMAGE_QUALITY", "75")),
+        "format": os.getenv("CAMERA_IMAGE_FORMAT", "jpeg").lower(),
+        "topic": os.getenv("CAMERA_TOPIC", DEFAULT_CAMERA_TOPIC),
+    }
+
+
 class ROSCameraInterface:
     """
     Singleton interface for camera image retrieval.
@@ -227,23 +238,37 @@ def initialize_camera_interface(node: Optional[Any] = None, topic: Optional[str]
 
 
 class CameraImageInput(BaseModel):
-    """Input schema for camera image capture."""
+    """Input schema for camera image capture.
+
+    All parameters are optional. If not provided, defaults from environment
+    variables or config file will be used (320x240 JPEG quality=75).
+    """
 
     topic: Optional[str] = Field(
         default=None,
-        description="Optional ROS 2 camera topic to read from (sensor_msgs/Image).",
+        description="Optional ROS 2 camera topic to read from (sensor_msgs/Image). If not specified, uses default topic.",
     )
-    max_width: int = Field(
-        default=640,
+    max_width: Optional[int] = Field(
+        default=None,
         ge=64,
         le=1920,
-        description="Max width for the returned image (pixels).",
+        description="Max width for the returned image in pixels. If not specified, uses CAMERA_IMAGE_MAX_WIDTH env var or 320.",
     )
-    max_height: int = Field(
-        default=480,
+    max_height: Optional[int] = Field(
+        default=None,
         ge=64,
         le=1080,
-        description="Max height for the returned image (pixels).",
+        description="Max height for the returned image in pixels. If not specified, uses CAMERA_IMAGE_MAX_HEIGHT env var or 240.",
+    )
+    quality: Optional[int] = Field(
+        default=None,
+        ge=10,
+        le=100,
+        description="JPEG compression quality (10-100). Higher = better quality but more tokens. If not specified, uses CAMERA_IMAGE_QUALITY env var or 75.",
+    )
+    format: Optional[str] = Field(
+        default=None,
+        description="Image format: 'jpeg' (smaller, lossy) or 'png' (larger, lossless). If not specified, uses CAMERA_IMAGE_FORMAT env var or 'jpeg'.",
     )
 
 
@@ -253,7 +278,9 @@ class GetCameraImageTool(BaseTool):
     name: str = "GetCameraImage"
     description: str = (
         "Get the latest camera image from the robot's camera topic. "
-        "Use this when you need a current camera snapshot."
+        "Use this when you need a current camera snapshot. "
+        "All parameters are optional - defaults will be used if not specified. "
+        "Returns a base64-encoded image embedded in markdown."
     )
     args_schema: Type[BaseModel] = CameraImageInput
     return_direct: bool = True
@@ -261,12 +288,21 @@ class GetCameraImageTool(BaseTool):
     def _run(
         self,
         topic: Optional[str] = None,
-        max_width: int = 640,
-        max_height: int = 480,
+        max_width: Optional[int] = None,
+        max_height: Optional[int] = None,
+        quality: Optional[int] = None,
+        format: Optional[str] = None,
         run_manager: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
         """Fetch the latest camera image and return it as Markdown."""
         start_time = time.time()
+
+        # Get defaults from config if not provided
+        config = _get_camera_config()
+        max_width = max_width if max_width is not None else config["max_width"]
+        max_height = max_height if max_height is not None else config["max_height"]
+        quality = quality if quality is not None else config["quality"]
+        format = format if format is not None else config["format"]
 
         interface = get_camera_interface()
         if topic:
@@ -278,7 +314,7 @@ class GetCameraImageTool(BaseTool):
             result = f"No camera image available yet on {interface.topic}."
             log_tool_call(
                 tool_name=self.name,
-                parameters={"topic": topic, "max_width": max_width, "max_height": max_height},
+                parameters={"topic": topic, "max_width": max_width, "max_height": max_height, "quality": quality, "format": format},
                 result=result,
                 success=False,
                 execution_time_ms=(time.time() - start_time) * 1000,
@@ -289,17 +325,38 @@ class GetCameraImageTool(BaseTool):
             pil_image = Image.fromarray(image)
             pil_image.thumbnail((max_width, max_height))
             buffer = io.BytesIO()
-            pil_image.save(buffer, format="PNG")
+
+            # Normalize format string
+            img_format = format.lower().strip()
+            if img_format == "jpeg" or img_format == "jpg":
+                # JPEG format with quality compression
+                pil_image.save(buffer, format="JPEG", quality=quality, optimize=True)
+                mime_type = "image/jpeg"
+            else:
+                # PNG format (lossless)
+                pil_image.save(buffer, format="PNG", optimize=True)
+                mime_type = "image/png"
+
             encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
-            data_url = f"data:image/png;base64,{encoded}"
+            encoded_size_kb = len(encoded) / 1024
+            estimated_tokens = int(len(encoded) / 4)  # Rough estimate: 4 bytes ≈ 1 token
+
+            data_url = f"data:{mime_type};base64,{encoded}"
             result = (
-                f"Camera image from {interface.topic} ({pil_image.width}x{pil_image.height}).\n\n"
+                f"Camera image from {interface.topic} ({pil_image.width}x{pil_image.height}, "
+                f"{img_format.upper()}, ~{estimated_tokens:,} tokens).\n\n"
                 f"![Camera Image]({data_url})"
             )
+
+            logger.info(
+                f"Camera image encoded: {pil_image.width}x{pil_image.height} {img_format.upper()}, "
+                f"size={encoded_size_kb:.1f}KB, est_tokens={estimated_tokens:,}"
+            )
+
             log_tool_call(
                 tool_name=self.name,
-                parameters={"topic": topic, "max_width": max_width, "max_height": max_height},
-                result=f"Camera image captured ({pil_image.width}x{pil_image.height})",
+                parameters={"topic": topic, "max_width": max_width, "max_height": max_height, "quality": quality, "format": format},
+                result=f"Camera image captured ({pil_image.width}x{pil_image.height}, {img_format.upper()}, ~{estimated_tokens:,} tokens)",
                 success=True,
                 execution_time_ms=(time.time() - start_time) * 1000,
             )
@@ -308,7 +365,7 @@ class GetCameraImageTool(BaseTool):
             result = f"Failed to render camera image: {e}"
             log_tool_call(
                 tool_name=self.name,
-                parameters={"topic": topic, "max_width": max_width, "max_height": max_height},
+                parameters={"topic": topic, "max_width": max_width, "max_height": max_height, "quality": quality, "format": format},
                 result=result,
                 success=False,
                 error=str(e),

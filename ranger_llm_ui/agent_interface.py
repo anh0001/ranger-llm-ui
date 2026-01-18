@@ -32,6 +32,7 @@ from rosa import ROSA, RobotSystemPrompts
 
 # Import LangChain components for LLM creation
 from langchain.agents import Tool
+from langchain.tools import StructuredTool
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_community.callbacks import get_openai_callback
@@ -201,37 +202,48 @@ class RangerAgent:
         logger.info(f"RangerAgent initialized with ROSA (ros-technician-cli submodule)")
         logger.info(f"Ranger tools: {[t.name for t in ranger_tools]}")
 
-    def _wrap_tools(self, tools: list[Any]) -> list[Tool]:
+    def _wrap_tools(self, tools: list[Any]) -> list[Any]:
         """
-        ROSA's tool registry expects LangChain Tools with a `.func`. Our local tools are
-        `BaseTool` subclasses, so wrap them into `langchain.agents.Tool` instances.
+        ROSA's tool registry expects LangChain Tools. For tools with structured
+        args_schema (like CameraImageInput), we return them as-is since BaseTool
+        handles structured inputs properly. For simple tools, we can wrap them.
         """
 
-        wrapped: list[Tool] = []
+        wrapped: list[Any] = []
 
         for base_tool in tools:
-            # Create a closure that captures the tool instance
-            def make_wrapper(tool_instance):
-                def _run_wrapped(*args, **kwargs):
-                    # Handle both calling conventions:
-                    # 1. Called with a dict as single positional arg: func({"key": "value"})
-                    # 2. Called with kwargs: func(key="value")
-                    if args and len(args) == 1 and isinstance(args[0], dict) and not kwargs:
-                        # Case 1: single dict argument
-                        return tool_instance._run(**args[0])
-                    else:
-                        # Case 2: keyword arguments
-                        return tool_instance._run(**kwargs)
-                return _run_wrapped
+            # Check if tool has a structured args_schema (Pydantic model)
+            has_structured_schema = hasattr(base_tool, "args_schema") and base_tool.args_schema is not None
 
-            wrapped.append(
-                Tool(
-                    name=base_tool.name,
-                    description=base_tool.description,
-                    func=make_wrapper(base_tool),
-                    args_schema=getattr(base_tool, "args_schema", None),
+            if has_structured_schema:
+                # Tool already has proper schema, don't wrap it - return as BaseTool
+                # Modern LangChain agents can handle BaseTool directly
+                logger.debug(f"Keeping structured tool as-is: {base_tool.name}")
+                wrapped.append(base_tool)
+            else:
+                # Simple tool without schema, wrap in old-style Tool
+                logger.debug(f"Wrapping simple tool: {base_tool.name}")
+                # Create a closure that captures the tool instance
+                def make_wrapper(tool_instance):
+                    def _run_wrapped(*args, **kwargs):
+                        # Handle both calling conventions:
+                        # 1. Called with a dict as single positional arg: func({"key": "value"})
+                        # 2. Called with kwargs: func(key="value")
+                        if args and len(args) == 1 and isinstance(args[0], dict) and not kwargs:
+                            # Case 1: single dict argument
+                            return tool_instance._run(**args[0])
+                        else:
+                            # Case 2: keyword arguments
+                            return tool_instance._run(**kwargs)
+                    return _run_wrapped
+
+                wrapped.append(
+                    Tool(
+                        name=base_tool.name,
+                        description=base_tool.description,
+                        func=make_wrapper(base_tool),
+                    )
                 )
-            )
 
         return wrapped
 
