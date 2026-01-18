@@ -38,20 +38,21 @@ User (Operator)
 
 ### Installation
 
-1. Clone the repository:
 ```bash
-git clone https://github.com/anh0001/ranger-llm-ui.git
+# Clone with submodules
+git clone --recurse-submodules https://github.com/anh0001/ranger-llm-ui.git
 cd ranger-llm-ui
-```
 
-2. Install Python dependencies:
-```bash
+# Initialize submodule if needed
+git submodule update --init
+
+# Install dependencies
+pip install -r requirements.txt
+pip install -e ros-technician-cli/
 pip install -e .
-# Or with dev dependencies:
-pip install -e ".[dev]"
 ```
 
-3. Set up environment variables:
+Set up environment variables:
 ```bash
 # Create .env file
 echo "OPENAI_API_KEY=your_api_key_here" > .env
