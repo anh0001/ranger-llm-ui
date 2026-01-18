@@ -34,16 +34,23 @@ ros-technician-cli/src/rosa/  # Git submodule - DO NOT MODIFY directly
 
 ## Development Workflows
 
+**CRITICAL**: All Python commands must use the custom user base directory:
+```bash
+export PYTHONUSERBASE="/home/robofi/.local/ranger_llm_ui_py310"
+```
+
 ### Building & Running
 
 **Without ROS2** (simulation mode for UI testing):
 ```bash
+export PYTHONUSERBASE="/home/robofi/.local/ranger_llm_ui_py310"
 python -m ranger_llm_ui.ui_node --simple  # Uses SimpleAgent (no LLM)
 python -m ranger_llm_ui.ui_node           # Uses RangerAgent with LLM
 ```
 
 **With ROS2** (requires `colcon` workspace):
 ```bash
+export PYTHONUSERBASE="/home/robofi/.local/ranger_llm_ui_py310"
 cd ~/ros2_ws
 colcon build --packages-select ranger_llm_ui
 source install/setup.bash
@@ -53,14 +60,18 @@ ros2 launch ranger_llm_ui ranger_llm_ui.launch.py
 
 **Testing**:
 ```bash
+export PYTHONUSERBASE="/home/robofi/.local/ranger_llm_ui_py310"
 pytest tests/                           # All tests (work in simulation)
 pytest tests/test_tools.py -k movement  # Specific test subset
 ```
 
 ### LLM Provider Configuration
 
-Set via environment variables (`.env` file supported):
+Set via environment variables (`.env` file supported). Always set PYTHONUSERBASE first:
 ```bash
+# CRITICAL: Set Python user base first
+export PYTHONUSERBASE="/home/robofi/.local/ranger_llm_ui_py310"
+
 # OpenAI (default)
 export OPENAI_API_KEY=sk-...
 export LLM_PROVIDER=openai
@@ -114,6 +125,11 @@ Use **singleton interfaces** to manage ROS2 lifecycle:
 - `ROSInterface` (movement) - initialized once with ROS2 node
 - `StatusInterface` (sensors) - initialized once with ROS2 node
 
+**Before running any Python/ROS2 commands**:
+```bash
+export PYTHONUSERBASE="/home/robofi/.local/ranger_llm_ui_py310"
+```
+
 ```python
 # In ui_node.py startup
 from ranger_llm_ui.tools.movement_tools import initialize_ros_interface
@@ -162,7 +178,12 @@ prompts = RobotSystemPrompts(
 
 ### 5. Streaming Response Pattern
 
-RangerAgent uses ROSA's async streaming for Gradio UI:
+RangerAgent uses ROSA's async streaming for Gradio UI.
+
+**Before running**:
+```bash
+export PYTHONUSERBASE="/home/robofi/.local/ranger_llm_ui_py310"
+```
 
 ```python
 async for event in agent.astream(user_input):

@@ -166,6 +166,11 @@ Run without ROS 2 using `--simple` flag for testing.
 
 ### Installation
 
+**IMPORTANT**: All Python commands must use the custom user base directory:
+```bash
+export PYTHONUSERBASE="/home/robofi/.local/ranger_llm_ui_py310"
+```
+
 ```bash
 # Clone with submodules (IMPORTANT!)
 git clone --recurse-submodules https://github.com/anh0001/ranger-llm-ui.git
@@ -173,6 +178,9 @@ cd ranger-llm-ui
 
 # Initialize submodules if not already done
 git submodule update --init
+
+# Set Python user base for isolated installation
+export PYTHONUSERBASE="/home/robofi/.local/ranger_llm_ui_py310"
 
 # Install dependencies
 pip install -r requirements.txt
@@ -200,11 +208,15 @@ LLM_PROVIDER=anthropic
 
 **Simple Mode (no ROS 2):**
 ```bash
+export PYTHONUSERBASE="/home/robofi/.local/ranger_llm_ui_py310"
 python -m ranger_llm_ui.ui_node --simple
 ```
 
 **With ROS 2:**
 ```bash
+# Set Python user base
+export PYTHONUSERBASE="/home/robofi/.local/ranger_llm_ui_py310"
+
 # Build workspace
 cd ~/ros2_ws
 colcon build --packages-select ranger_llm_ui
@@ -251,6 +263,9 @@ class MyNewTool(BaseTool):
 ### Testing
 
 ```bash
+# Set Python user base
+export PYTHONUSERBASE="/home/robofi/.local/ranger_llm_ui_py310"
+
 # Run all tests
 pytest tests/ -v
 
@@ -317,6 +332,7 @@ mypy ranger_llm_ui/
 
 Use `--simple` mode for testing without ROS 2:
 ```bash
+export PYTHONUSERBASE="/home/robofi/.local/ranger_llm_ui_py310"
 python -m ranger_llm_ui.ui_node --simple
 ```
 

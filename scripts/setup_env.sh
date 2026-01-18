@@ -14,6 +14,7 @@ echo -e "${GREEN}Ranger LLM UI Environment Setup${NC}"
 echo -e "${GREEN}====================================${NC}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Require python3 and ROS Humble
 if ! command -v python3 >/dev/null 2>&1; then
@@ -42,35 +43,35 @@ echo -e "\n${YELLOW}Step 1: Upgrading pip in the isolated user base${NC}"
 "$PYTHON_BIN" -m pip install --upgrade --user pip
 
 echo -e "\n${YELLOW}Step 2: Installing Python dependencies from requirements.txt${NC}"
-pip_user -r "$SCRIPT_DIR/requirements.txt"
+pip_user -r "$PROJECT_ROOT/requirements.txt"
 
 echo -e "\n${YELLOW}Step 3: Installing ros-technician-cli (ROSA) as editable package${NC}"
-if [ -d "$SCRIPT_DIR/ros-technician-cli" ]; then
-    pip_user -e "$SCRIPT_DIR/ros-technician-cli"
+if [ -d "$PROJECT_ROOT/ros-technician-cli" ]; then
+    pip_user -e "$PROJECT_ROOT/ros-technician-cli"
 else
     echo -e "${RED}Warning: ros-technician-cli submodule not found. Run 'git submodule update --init' first.${NC}"
 fi
 
 echo -e "\n${YELLOW}Step 4: Installing ranger_llm_ui as editable package${NC}"
-pip_user -e "$SCRIPT_DIR"
+pip_user -e "$PROJECT_ROOT"
 
 echo -e "\n${YELLOW}Step 5: Installing ROS 2 dependencies via rosdep${NC}"
 set +u  # ROS setup scripts reference unset vars such as AMENT_TRACE_SETUP_FILES
 source /opt/ros/humble/setup.bash
 set -u
-rosdep install --from-paths "$SCRIPT_DIR" "$SCRIPT_DIR/ros2_numpy" --ignore-src -y || true
+rosdep install --from-paths "$PROJECT_ROOT" "$PROJECT_ROOT/ros2_numpy" --ignore-src -y || true
 
 echo -e "\n${YELLOW}Step 6: Cleaning previous colcon build artifacts (safe if absent)${NC}"
-rm -rf "$SCRIPT_DIR/build" "$SCRIPT_DIR/install" "$SCRIPT_DIR/log"
+rm -rf "$PROJECT_ROOT/build" "$PROJECT_ROOT/install" "$PROJECT_ROOT/log"
 
 echo -e "\n${YELLOW}Step 7: Building ROS 2 packages${NC}"
-cd "$SCRIPT_DIR"
+cd "$PROJECT_ROOT"
 colcon build --packages-select ros2_numpy ranger_llm_ui
 
 echo -e "\n${YELLOW}Step 8: Verifying imports${NC}"
 set +u
 source /opt/ros/humble/setup.bash
-source "$SCRIPT_DIR/install/setup.bash"
+source "$PROJECT_ROOT/install/setup.bash"
 set -u
 "$PYTHON_BIN" - <<'VERIFY'
 import gradio
@@ -90,11 +91,11 @@ cat <<EOF
 Next steps for each terminal:
 1. export PYTHONUSERBASE="$PYTHONUSERBASE"    # add to ~/.bashrc for convenience
 2. source /opt/ros/humble/setup.bash
-3. source $SCRIPT_DIR/install/setup.bash
+3. source $PROJECT_ROOT/install/setup.bash
 
 Optional helper alias:
     echo 'export PYTHONUSERBASE="$PYTHONUSERBASE"' >> ~/.bashrc
-    echo 'alias ranger_setup="export PYTHONUSERBASE=$PYTHONUSERBASE && source /opt/ros/humble/setup.bash && source $SCRIPT_DIR/install/setup.bash"' >> ~/.bashrc
+    echo 'alias ranger_setup="export PYTHONUSERBASE=$PYTHONUSERBASE && source /opt/ros/humble/setup.bash && source $PROJECT_ROOT/install/setup.bash"' >> ~/.bashrc
 
 To run the UI:
     python -m ranger_llm_ui.ui_node --simple    # Without ROS 2

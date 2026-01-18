@@ -5,6 +5,10 @@ This repo provides a Gradio-based chat UI and LangChain agent that control a Ran
 
 ## Setup
 - Python 3.10+ required; ROS 2 Humble is optional (needed for real robot integration).
+- **IMPORTANT**: Set Python user base before running any commands:
+  ```bash
+  export PYTHONUSERBASE="/home/robofi/.local/ranger_llm_ui_py310"
+  ```
 - Install dependencies:
   - `pip install -r requirements.txt`
   - `pip install -e ros-technician-cli/`
@@ -12,12 +16,14 @@ This repo provides a Gradio-based chat UI and LangChain agent that control a Ran
 - Configure environment variables by copying `.env.example` to `.env` and setting provider/API keys.
 
 ## Run
+- **Set environment first**: `export PYTHONUSERBASE="/home/robofi/.local/ranger_llm_ui_py310"`
 - Simulation mode (no ROS 2): `python -m ranger_llm_ui.ui_node --simple`
 - ROS 2 mode:
   - `ros2 run ranger_llm_ui ui_node`
   - or `ros2 launch ranger_llm_ui ranger_llm_ui.launch.py`
 
 ## Tests and Lint
+- **Set environment first**: `export PYTHONUSERBASE="/home/robofi/.local/ranger_llm_ui_py310"`
 - Unit tests: `pytest tests/ -v`
 - Code style: `black ranger_llm_ui/`, `flake8 ranger_llm_ui/`, `mypy ranger_llm_ui/`
 
