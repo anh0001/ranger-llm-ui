@@ -1,0 +1,3 @@
+[submodule "ros-technician-cli"]
+	path = ros-technician-cli
+	url = https://github.com/anh0001/ros-technician-cli.git
