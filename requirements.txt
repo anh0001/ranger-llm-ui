@@ -1,0 +1,27 @@
+# Core dependencies
+gradio>=4.0.0
+langchain>=0.1.0
+langchain-openai>=0.0.5
+langchain-community>=0.0.10
+langchain-core>=0.1.0
+
+# Data validation
+pydantic>=2.0.0
+
+# Configuration
+python-dotenv>=1.0.0
+PyYAML>=6.0
+
+# Optional: Local LLM support via Ollama
+# ollama>=0.1.0
+
+# Optional: Alternative LLM providers
+# langchain-anthropic>=0.1.0
+# litellm>=1.0.0
+
+# Development dependencies
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+black>=23.0.0
+flake8>=6.0.0
+mypy>=1.0.0

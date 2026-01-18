@@ -1,0 +1,76 @@
+# Ranger LLM UI Configuration
+# This file contains default configuration for the Ranger LLM UI.
+
+# LLM Configuration
+llm:
+  # Provider: openai, ollama, or anthropic
+  provider: openai
+
+  # Model name (leave empty for provider default)
+  # Examples:
+  #   OpenAI: gpt-4, gpt-3.5-turbo
+  #   Ollama: llama2, codellama, mistral
+  #   Anthropic: claude-3-sonnet-20240229
+  model: ""
+
+  # Temperature for LLM generation (0.0 = deterministic, 1.0 = creative)
+  temperature: 0.0
+
+# Gradio UI Configuration
+ui:
+  # Server port
+  port: 7860
+
+  # Create public share link
+  share: false
+
+  # Theme (soft, default, glass, monochrome)
+  theme: soft
+
+# Safety Configuration
+safety:
+  # Maximum linear velocity (m/s)
+  max_linear_velocity: 0.5
+
+  # Default linear velocity (m/s)
+  default_linear_velocity: 0.2
+
+  # Maximum angular velocity (rad/s)
+  max_angular_velocity: 1.0
+
+  # Maximum single move distance (m)
+  max_single_move_distance: 5.0
+
+  # Distance threshold requiring confirmation (m)
+  confirmation_threshold_distance: 2.0
+
+  # Low battery warning threshold (%)
+  low_battery_threshold: 20.0
+
+  # Critical battery threshold (%)
+  critical_battery_threshold: 10.0
+
+# ROS 2 Configuration
+ros:
+  # Node name
+  node_name: ranger_llm_ui
+
+  # Topics
+  topics:
+    cmd_vel: /cmd_vel
+    odom: /odom
+    battery_state: /battery_state
+
+# Logging Configuration
+logging:
+  # Log level: DEBUG, INFO, WARNING, ERROR
+  level: INFO
+
+  # Log to console
+  console: true
+
+  # Log to file
+  file: true
+
+  # Log directory (relative to home)
+  log_dir: .ranger_llm_ui/logs
