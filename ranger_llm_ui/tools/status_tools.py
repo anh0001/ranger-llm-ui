@@ -227,6 +227,9 @@ def get_status_interface() -> ROSStatusInterface:
     global _status_interface
     if _status_interface is None:
         _status_interface = ROSStatusInterface()
+    # Ensure interface is initialized (with no node if not already initialized)
+    if not _status_interface._initialized:
+        _status_interface.initialize()
     return _status_interface
 
 

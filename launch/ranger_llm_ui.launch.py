@@ -32,9 +32,11 @@ def generate_launch_description():
         description='LLM model name (empty for provider default)'
     )
 
+    default_gradio_port = os.getenv('GRADIO_SERVER_PORT') or os.getenv('GRADIO_PORT') or '7860'
+
     gradio_port_arg = DeclareLaunchArgument(
         'gradio_port',
-        default_value='7860',
+        default_value=default_gradio_port,
         description='Gradio web server port'
     )
 

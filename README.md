@@ -1,11 +1,10 @@
 # Ranger LLM UI
 
-LLM-driven natural language operator interface for the Ranger garden robot. This system integrates a Gradio-based chat UI with a LangChain agent to interpret natural language commands and execute safe ROS 2 actions.
+LLM-driven natural language operator interface for the Ranger garden robot.
 
 ## Features
 
 - **Natural Language Control**: Control the robot using conversational commands like "move forward 1 meter" or "turn left 90 degrees"
-- **Gradio Chat Interface**: Web-based chat UI with streaming responses and tool usage visualization
 - **Safety First**: Built-in safety guards with velocity limits, distance validation, and emergency stop
 - **Multiple LLM Backends**: Support for OpenAI, Ollama (local), and Anthropic
 - **ROS 2 Integration**: Native ROS 2 Humble support via rclpy
@@ -17,7 +16,7 @@ LLM-driven natural language operator interface for the Ranger garden robot. This
 User (Operator)
      │ Types NL command
      ▼
-[Gradio Chat UI] ──(LLM prompt)──> [LangChain Agent]
+[Chat UI] ──(LLM prompt)──> [LangChain Agent]
      │                                    │
      │                                    ▼
      │                            [Ranger Tools]
@@ -162,7 +161,7 @@ See `config/default_config.yaml` for all available options including safety limi
 ```
 ranger-llm-ui/
 ├── ranger_llm_ui/           # Main package
-│   ├── ui_node.py           # Entry point (Gradio + ROS 2)
+│   ├── ui_node.py           # Entry point
 │   ├── agent_interface.py   # LangChain agent
 │   ├── tools/               # Robot tools
 │   │   ├── movement_tools.py
@@ -219,7 +218,7 @@ mypy ranger_llm_ui/
 
 ### MVP (Current)
 - [x] Natural language commanding
-- [x] Gradio chat interface
+- [x] Chat interface
 - [x] Core movement and status tools
 - [x] Safety mechanisms
 - [x] OpenAI backend
@@ -247,10 +246,3 @@ mypy ranger_llm_ui/
 ## License
 
 MIT License - see LICENSE file
-
-## References
-
-- [NASA JPL ROSA](https://github.com/nasa-jpl/rosa) - Robot Operating System Agent
-- [TurtleBot3 Agent](https://github.com/Yutarop/turtlebot3_agent) - LLM control for TurtleBot3
-- [Gradio Agents Guide](https://www.gradio.app/guides/agents-and-tool-usage)
-- [LangChain Documentation](https://python.langchain.com/)

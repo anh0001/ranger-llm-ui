@@ -227,6 +227,9 @@ def get_camera_interface() -> ROSCameraInterface:
     global _camera_interface
     if _camera_interface is None:
         _camera_interface = ROSCameraInterface()
+    # Ensure interface is initialized (with no node if not already initialized)
+    if not _camera_interface._initialized:
+        _camera_interface.initialize()
     return _camera_interface
 
 
