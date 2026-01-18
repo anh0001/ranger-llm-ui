@@ -210,14 +210,25 @@ class RangerAgent:
         wrapped: list[Tool] = []
 
         for base_tool in tools:
-            def _run_wrapped(*, _tool=base_tool, **kwargs):  # type: ignore[no-redef]
-                return _tool.run(kwargs)
+            # Create a closure that captures the tool instance
+            def make_wrapper(tool_instance):
+                def _run_wrapped(*args, **kwargs):
+                    # Handle both calling conventions:
+                    # 1. Called with a dict as single positional arg: func({"key": "value"})
+                    # 2. Called with kwargs: func(key="value")
+                    if args and len(args) == 1 and isinstance(args[0], dict) and not kwargs:
+                        # Case 1: single dict argument
+                        return tool_instance._run(**args[0])
+                    else:
+                        # Case 2: keyword arguments
+                        return tool_instance._run(**kwargs)
+                return _run_wrapped
 
             wrapped.append(
                 Tool(
                     name=base_tool.name,
                     description=base_tool.description,
-                    func=_run_wrapped,
+                    func=make_wrapper(base_tool),
                     args_schema=getattr(base_tool, "args_schema", None),
                 )
             )
@@ -225,19 +236,24 @@ class RangerAgent:
         return wrapped
 
     def _trim_chat_history(self):
+        """Trim chat history to prevent context length overflow."""
         if self._max_history_messages <= 0:
             return
         history = self._rosa.chat_history
         if len(history) > self._max_history_messages:
+            # Keep only the most recent messages
             del history[: len(history) - self._max_history_messages]
+            logger.info(f"Trimmed chat history to {len(history)} messages")
 
     def _initialize_ranger_tools(self, ros_node: Optional[Any]):
         """Initialize Ranger tools with the ROS node."""
         from ranger_llm_ui.tools.movement_tools import initialize_ros_interface
         from ranger_llm_ui.tools.status_tools import initialize_status_interface
+        from ranger_llm_ui.tools.camera_tools import initialize_camera_interface
 
         initialize_ros_interface(ros_node)
         initialize_status_interface(ros_node)
+        initialize_camera_interface(ros_node)
 
     def invoke(self, user_input: str) -> dict:
         """
@@ -427,6 +443,8 @@ class SimpleAgent:
                     angle = float(part)
                     break
             result = self.tool_map["turnangle"].run({"angle_deg": angle})
+        elif "camera" in user_input_lower or "image" in user_input_lower:
+            result = self.tool_map["getcameraimage"].run({})
         else:
             result = f"I don't understand '{user_input}'. Try: move forward 1, turn left 90, stop, or battery"
 

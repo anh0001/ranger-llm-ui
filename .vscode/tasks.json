@@ -7,7 +7,7 @@
             "command": "bash",
             "args": [
                 "-c",
-                "set -a && source .env && set +a && source ./install/setup.bash && export PYTHONUSERBASE=\"/home/robofi/.local/ranger_llm_ui_py310\" && ros2 launch ranger_llm_ui ranger_llm_ui.launch.py"
+                "set -a && source .env && set +a && export PYTHONUSERBASE=\"/home/robofi/.local/ranger_llm_ui_py310\" && export PYTHONPATH=\"/home/robofi/.local/ranger_llm_ui_py310/lib/python3.10/site-packages:$PYTHONPATH\" && source ./install/setup.bash && ros2 launch ranger_llm_ui ranger_llm_ui.launch.py"
             ],
             "group": {
                 "kind": "run",

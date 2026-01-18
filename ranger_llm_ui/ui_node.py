@@ -27,6 +27,7 @@ from dotenv import load_dotenv
 from ranger_llm_ui.agent_interface import create_agent, RangerAgent, LLMProvider
 from ranger_llm_ui.tools.movement_tools import get_ros_interface
 from ranger_llm_ui.tools.status_tools import get_status_interface
+from ranger_llm_ui.tools.camera_tools import get_camera_interface
 from ranger_llm_ui.utils.logger import setup_logging, get_command_logger
 
 # Load environment variables from .env file
@@ -149,6 +150,11 @@ class RangerUINode:
         if level < 0:
             return "Battery: Unknown"
         return f"Battery: {level:.0f}% ({status})"
+
+    def get_camera_image(self):
+        """Get the latest camera image for display."""
+        interface = get_camera_interface()
+        return interface.get_latest_image()
 
     def chat_response(
         self, message: str, history: list[dict]
@@ -291,6 +297,15 @@ class RangerUINode:
                     )
                     refresh_btn = gr.Button("Refresh Status", size="sm")
 
+                    gr.Markdown("### Camera")
+                    camera_image = gr.Image(
+                        label="Camera",
+                        value=self.get_camera_image(),
+                        interactive=False,
+                        height=240,
+                    )
+                    camera_refresh_btn = gr.Button("Refresh Camera", size="sm")
+
                     gr.Markdown("### Manual Controls")
                     with gr.Row():
                         gr.Button("").visible = False  # Spacer
@@ -347,6 +362,11 @@ class RangerUINode:
                 outputs=[battery_display],
             )
 
+            camera_refresh_btn.click(
+                fn=self.get_camera_image,
+                outputs=[camera_image],
+            )
+
             # Manual control handlers
             fwd_btn.click(fn=self.teleop_forward, outputs=[manual_output])
             back_btn.click(fn=self.teleop_backward, outputs=[manual_output])
@@ -369,12 +389,18 @@ class RangerUINode:
         # Create and launch UI
         demo = self.create_ui()
 
+        # CSS to hide Gradio footer
+        css = """
+        footer {display: none !important;}
+        """
+
         try:
             demo.launch(
                 server_name="0.0.0.0",
                 server_port=self.server_port,
                 share=self.share,
                 show_error=True,
+                css=css,
             )
         except KeyboardInterrupt:
             logger.info("Shutting down...")

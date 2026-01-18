@@ -192,6 +192,7 @@ class ROSStatusInterface:
                 ("/cmd_vel", ["geometry_msgs/msg/Twist"]),
                 ("/odom", ["nav_msgs/msg/Odometry"]),
                 ("/battery_state", ["sensor_msgs/msg/BatteryState"]),
+                ("/camera/image_raw", ["sensor_msgs/msg/Image"]),
                 ("/scan", ["sensor_msgs/msg/LaserScan"]),
                 ("/tf", ["tf2_msgs/msg/TFMessage"]),
             ]

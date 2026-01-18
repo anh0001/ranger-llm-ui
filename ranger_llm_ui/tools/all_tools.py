@@ -5,6 +5,7 @@ This module provides a central registry of all available tools for the
 Ranger robot agent. Tools are categorized by function:
 - Movement tools: MoveForward, MoveBackward, TurnAngle, StopRobot
 - Status tools: BatteryStatus, SystemHealth, GetOdometry, ListNodes, ListTopics
+- Perception tools: GetCameraImage
 
 The agent's prompt will be configured to only use these tools for execution.
 If the user asks for something outside this scope, the agent should refuse
@@ -33,6 +34,11 @@ from ranger_llm_ui.tools.status_tools import (
     get_status_tools,
     initialize_status_interface,
 )
+from ranger_llm_ui.tools.camera_tools import (
+    GetCameraImageTool,
+    get_camera_tools,
+    initialize_camera_interface,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +57,10 @@ TOOL_CATEGORIES = {
         "description": "Tools for ROS 2 system diagnostics",
         "tools": ["ListNodes", "ListTopics"],
     },
+    "perception": {
+        "description": "Tools for camera and perception data",
+        "tools": ["GetCameraImage"],
+    },
 }
 
 
@@ -58,6 +68,7 @@ def get_all_tools(
     include_movement: bool = True,
     include_status: bool = True,
     include_diagnostics: bool = True,
+    include_perception: bool = True,
 ) -> list[BaseTool]:
     """
     Get all registered tools for the agent.
@@ -93,6 +104,11 @@ def get_all_tools(
             ListTopicsTool(),
         ])
 
+    if include_perception:
+        tools.extend([
+            GetCameraImageTool(),
+        ])
+
     logger.info(f"Loaded {len(tools)} tools: {[t.name for t in tools]}")
     return tools
 
@@ -116,6 +132,8 @@ def get_tools_by_category(category: str) -> list[BaseTool]:
         return [BatteryStatusTool(), SystemHealthTool(), GetOdometryTool()]
     elif category == "diagnostics":
         return [ListNodesTool(), ListTopicsTool()]
+    elif category == "perception":
+        return get_camera_tools()
     else:
         return []
 
@@ -136,6 +154,7 @@ def initialize_all_tools(node: Optional[Any] = None) -> list[BaseTool]:
     # Initialize ROS interfaces
     initialize_ros_interface(node)
     initialize_status_interface(node)
+    initialize_camera_interface(node)
 
     # Return all tools
     return get_all_tools()

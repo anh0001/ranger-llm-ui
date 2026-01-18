@@ -98,6 +98,7 @@ Your ROS 2 system runs on the robot's onboard computer. You communicate via:
 - /cmd_vel topic for movement commands (geometry_msgs/Twist)
 - /odom topic for odometry feedback
 - /battery_state topic for battery status
+- /camera/image_raw topic for camera images
 - Various other sensor and diagnostic topics
 """.strip(),
 
@@ -112,6 +113,9 @@ STATUS CAPABILITIES:
 - BatteryStatus: Check current battery level and charging state
 - SystemHealth: Check overall system health and diagnostics
 - GetOdometry: Get current position and orientation
+
+PERCEPTION CAPABILITIES:
+- GetCameraImage: Fetch the latest camera image snapshot
 
 ROS INTROSPECTION (inherited from ROSA):
 - List available ROS nodes, topics, services

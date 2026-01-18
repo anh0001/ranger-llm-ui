@@ -28,6 +28,11 @@ from ranger_llm_ui.tools.status_tools import (
     get_status_interface,
     initialize_status_interface,
 )
+from ranger_llm_ui.tools.camera_tools import (
+    GetCameraImageTool,
+    get_camera_tools,
+    initialize_camera_interface,
+)
 from ranger_llm_ui.tools.all_tools import (
     get_all_tools,
     get_tools_by_category,
@@ -182,6 +187,30 @@ class TestStatusTools:
         assert "SystemHealth" in tool_names
 
 
+class TestCameraTools:
+    """Test suite for camera tools."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        """Set up test fixtures."""
+        initialize_camera_interface(None)
+
+    def test_get_camera_image(self):
+        """Test camera image retrieval (simulation)."""
+        tool = GetCameraImageTool()
+        result = tool.run({})
+
+        assert "camera image" in result.lower()
+        assert "data:image/png;base64" in result
+
+    def test_get_camera_tools(self):
+        """Test getting all camera tools."""
+        tools = get_camera_tools()
+
+        assert len(tools) == 1
+        assert tools[0].name == "GetCameraImage"
+
+
 class TestAllTools:
     """Test suite for tool registry."""
 
@@ -195,6 +224,7 @@ class TestAllTools:
         assert "MoveForward" in tool_names
         assert "BatteryStatus" in tool_names
         assert "ListNodes" in tool_names
+        assert "GetCameraImage" in tool_names
 
     def test_get_tools_by_category(self):
         """Test getting tools by category."""
@@ -204,6 +234,9 @@ class TestAllTools:
         status_tools = get_tools_by_category("status")
         assert len(status_tools) == 3
 
+        perception_tools = get_tools_by_category("perception")
+        assert len(perception_tools) == 1
+
         with pytest.raises(ValueError):
             get_tools_by_category("invalid_category")
 
@@ -212,6 +245,7 @@ class TestAllTools:
         assert "movement" in TOOL_CATEGORIES
         assert "status" in TOOL_CATEGORIES
         assert "diagnostics" in TOOL_CATEGORIES
+        assert "perception" in TOOL_CATEGORIES
 
 
 class TestSafetyGuard:
