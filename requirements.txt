@@ -19,7 +19,7 @@ PyYAML>=6.0.1
 # Required by ROSA (ros-technician-cli submodule)
 rich
 pillow>=10.4.0
-numpy>=1.26.4
+numpy>=1.26.4,<2.0.0
 pyinputplus
 
 # Optional: Alternative LLM providers
