@@ -15,6 +15,26 @@
             },
             "isBackground": true,
             "problemMatcher": []
+        },
+        {
+            "label": "Build with colcon",
+            "type": "shell",
+            "command": "bash",
+            "args": [
+                "-c",
+                "export PYTHONUSERBASE=\"/home/robofi/.local/ranger_llm_ui_py310\" && colcon build --packages-select ranger_llm_ui"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            }
         }
     ]
 }

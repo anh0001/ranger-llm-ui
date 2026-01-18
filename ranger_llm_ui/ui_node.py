@@ -151,25 +151,27 @@ class RangerUINode:
         return f"Battery: {level:.0f}% ({status})"
 
     def chat_response(
-        self, message: str, history: list[list[str]]
-    ) -> Generator[list[list[str]], None, None]:
+        self, message: str, history: list[dict]
+    ) -> Generator[list[dict], None, None]:
         """
         Generate chat response with streaming.
 
         Args:
             message: User message
-            history: Chat history as list of [user, assistant] pairs
+            history: Chat history as list of message dicts with 'role' and 'content'
 
         Yields:
             Updated history with streaming response
         """
         if not self.agent:
-            history.append([message, "Agent not initialized. Please check configuration."])
+            history.append({"role": "user", "content": message})
+            history.append({"role": "assistant", "content": "Agent not initialized. Please check configuration."})
             yield history
             return
 
         # Add user message to history
-        history.append([message, ""])
+        history.append({"role": "user", "content": message})
+        history.append({"role": "assistant", "content": ""})
 
         try:
             # For synchronous response (non-streaming)
@@ -187,12 +189,12 @@ class RangerUINode:
                 if tool_info:
                     output = "\n".join(tool_info) + "\n\n" + output
 
-            history[-1][1] = output
+            history[-1]["content"] = output
             yield history
 
         except Exception as e:
             logger.error(f"Chat error: {e}")
-            history[-1][1] = f"Error: {str(e)}"
+            history[-1]["content"] = f"Error: {str(e)}"
             yield history
 
     def teleop_forward(self, distance: float = 0.5) -> str:
@@ -357,6 +359,7 @@ class RangerUINode:
 
         try:
             demo.launch(
+                server_name="0.0.0.0",
                 server_port=self.server_port,
                 share=self.share,
                 show_error=True,
