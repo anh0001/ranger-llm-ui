@@ -18,6 +18,8 @@ import sys
 import asyncio
 import threading
 import logging
+import re
+from datetime import datetime
 from typing import Optional, Generator, Any
 from pathlib import Path
 import socket
@@ -55,182 +57,419 @@ ROBOT_AVATAR_PATH = ASSETS_DIR / "robot_ranger_garden.webp"
 
 
 def create_ranger_theme() -> gr.themes.Soft:
-    """Create custom Ranger dashboard theme with professional styling."""
+    """Create Ranger Agent style theme with clean, centered design."""
     return gr.themes.Soft(
-        primary_hue="indigo",
-        secondary_hue="slate",
-        neutral_hue="slate",
+        primary_hue="blue",
+        secondary_hue="gray",
+        neutral_hue="gray",
         spacing_size="md",
         radius_size="lg",
         text_size="md",
     ).set(
         # Primary button styling
-        button_primary_background_fill="#4F46E5",
-        button_primary_background_fill_hover="#4338CA",
+        button_primary_background_fill="#4A90E2",
+        button_primary_background_fill_hover="#2F6FB2",
         button_primary_text_color="white",
-        button_primary_border_color="#4F46E5",
-        button_primary_shadow="0 4px 6px -1px rgba(79, 70, 229, 0.3)",
+        button_primary_border_color="#4A90E2",
+        button_primary_shadow="0 2px 4px rgba(74, 144, 226, 0.25)",
         # Secondary button styling
-        button_secondary_background_fill="#F1F5F9",
-        button_secondary_background_fill_hover="#E2E8F0",
-        button_secondary_text_color="#334155",
+        button_secondary_background_fill="#F4F7FB",
+        button_secondary_background_fill_hover="#E5ECF5",
+        button_secondary_text_color="#3A4A5E",
         # Stop button styling
         button_cancel_background_fill="#EF4444",
         button_cancel_background_fill_hover="#DC2626",
         button_cancel_text_color="white",
         button_cancel_border_color="#EF4444",
-        # Block/card styling
+        # Block/card styling - cleaner for single column
         block_background_fill="white",
-        block_border_color="#E2E8F0",
-        block_shadow="0 1px 3px 0 rgba(0, 0, 0, 0.1)",
+        block_border_color="transparent",
+        block_shadow="none",
         block_title_text_weight="600",
         block_label_text_weight="500",
         # Input styling
         input_background_fill="white",
-        input_border_color="#CBD5E1",
-        input_border_color_focus="#4F46E5",
-        # Body/container
-        body_background_fill="#F8FAFC",
+        input_border_color="#E3E8EF",
+        input_border_color_focus="#4A90E2",
+        # Body/container - light background
+        body_background_fill="#F6F8FB",
     )
 
 
-# Comprehensive CSS for professional dashboard styling
+# CSS for Ranger Agent style interface
 RANGER_CSS = """
 /* ================================================
-   RANGER ROBOT CONTROL DASHBOARD - PROFESSIONAL THEME
+   RANGER ROBOT - SPOT AGENT STYLE INTERFACE
    ================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&family=Sora:wght@400;600;700&display=swap');
+
+:root {
+    --rg-primary: #4A90E2;
+    --rg-primary-strong: #2F6FB2;
+    --rg-ink: #1E2A3B;
+    --rg-muted: #5B6B7A;
+    --rg-border: #E3E8EF;
+    --rg-panel: #FFFFFF;
+    --rg-panel-soft: #F4F7FB;
+    --rg-query: #EAF4FF;
+    --rg-response: #FFF6E5;
+}
+
+/* Gradio v4 renders inside a shadow root; :host targets the app wrapper. */
+:host,
+:host([data-color-mode="dark"]) {
+    color-scheme: light !important;
+    background: #F6F8FB !important;
+    display: block !important;
+    min-height: 100vh !important;
+}
+
+.gradio-container {
+    font-family: "Sora", "Segoe UI", sans-serif !important;
+    color: var(--rg-ink) !important;
+    background: #F6F8FB !important;
+    min-height: 100vh !important;
+}
 
 /* === HIDE GRADIO FOOTER === */
 footer { display: none !important; }
 
-/* === MAIN CONTAINER === */
+/* === HIDE GRADIO MENU BUTTON (...) === */
+.gradio-container button[aria-label="Show actions"],
+.gradio-container button[aria-label="Open actions menu"],
+.gradio-container .actions-menu-toggle,
+.gradio-container [data-testid="actions-menu"] { 
+    display: none !important; 
+}
+
+/* === HIDE IMAGE ACTION BUTTONS (fullscreen, download, share) === */
+.spot-mascot-image .image-button-row,
+.spot-mascot-image [class*="image-button"],
+.spot-mascot-image button[aria-label*="fullscreen"],
+.spot-mascot-image button[aria-label*="download"],
+.spot-mascot-image button[aria-label*="share"],
+.spot-mascot .image-container button,
+.spot-mascot [class*="icon-button"],
+.spot-mascot .svelte-1pijsyv button {
+    display: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+}
+
+/* === MAIN CONTAINER - Centered single column === */
 .gradio-container {
-    max-width: 1600px !important;
-    margin: 0 auto !important;
-}
-
-/* === HEADER BAR === */
-.ranger-header {
-    background: linear-gradient(135deg, #4F46E5, #6366F1) !important;
-    border-radius: 12px !important;
-    padding: 16px 24px !important;
-    margin-bottom: 20px !important;
-    box-shadow: 0 4px 6px -1px rgba(79, 70, 229, 0.3) !important;
-}
-
-.ranger-header-content {
-    display: flex !important;
-    align-items: center !important;
-    justify-content: space-between !important;
-    flex-wrap: wrap !important;
-    gap: 12px !important;
-}
-
-.ranger-header-left {
-    display: flex !important;
-    align-items: center !important;
-    gap: 16px !important;
-}
-
-.ranger-logo {
-    width: 48px !important;
-    height: 48px !important;
-    border-radius: 12px !important;
-    object-fit: cover !important;
-    border: 2px solid rgba(255, 255, 255, 0.3) !important;
-}
-
-.ranger-title {
-    color: white !important;
+    max-width: 100% !important;
+    width: 100% !important;
     margin: 0 !important;
+    padding: 24px 40px 32px 40px !important;
+    box-sizing: border-box !important;
+    background: #F6F8FB !important;
 }
 
-.ranger-title h1 {
-    font-size: 1.5rem !important;
+/* === HEADER - Centered with nav links === */
+.spot-header {
+    text-align: center !important;
+    padding: 16px 0 10px 0 !important;
+    border-top: 3px solid var(--rg-primary) !important;
+    margin-bottom: 10px !important;
+}
+
+.spot-title {
+    font-size: 2rem !important;
     font-weight: 700 !important;
-    margin: 0 !important;
-    color: white !important;
+    font-family: "Fraunces", "Sora", serif !important;
+    color: var(--rg-ink) !important;
+    margin: 0 0 12px 0 !important;
 }
 
-.ranger-title p {
-    font-size: 0.875rem !important;
-    opacity: 0.9 !important;
-    margin: 4px 0 0 0 !important;
-    color: white !important;
+.spot-subtitle {
+    font-size: 0.9rem !important;
+    color: var(--rg-muted) !important;
+    margin: 0 0 15px 0 !important;
 }
 
-/* === STATUS BADGES === */
-.status-badge {
-    display: inline-flex !important;
+.spot-nav {
+    display: flex !important;
+    justify-content: center !important;
     align-items: center !important;
-    padding: 6px 14px !important;
-    border-radius: 9999px !important;
-    font-size: 0.75rem !important;
+    gap: 8px !important;
+    margin-top: 10px !important;
+}
+
+.spot-nav-link {
+    color: var(--rg-muted) !important;
+    text-decoration: none !important;
+    font-size: 1rem !important;
+    cursor: pointer !important;
+    padding: 8px 16px !important;
+    border-radius: 6px !important;
+    transition: all 0.2s ease !important;
+    background: transparent !important;
+    border: none !important;
+}
+
+.spot-nav-link:hover {
+    color: var(--rg-primary-strong) !important;
+    background: #EAF2FB !important;
+}
+
+.spot-nav-link.active {
+    color: var(--rg-primary-strong) !important;
     font-weight: 600 !important;
-    text-transform: uppercase !important;
-    letter-spacing: 0.05em !important;
-    gap: 6px !important;
+    background: #EAF2FB !important;
 }
 
-.status-badge::before {
-    content: '';
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
+.spot-nav-separator {
+    color: #C7D2E2 !important;
+    font-size: 1rem !important;
 }
 
-.status-online {
-    background: rgba(16, 185, 129, 0.2) !important;
-    color: #D1FAE5 !important;
+/* === ROBOT MASCOT - Larger centered image === */
+.spot-mascot {
+    display: flex !important;
+    justify-content: center !important;
+    padding: 20px 0 !important;
 }
 
-.status-online::before {
-    background: #10B981;
-    animation: pulse-dot 2s infinite;
+.spot-mascot img,
+.spot-mascot-image img {
+    width: 190px !important;
+    height: auto !important;
+    object-fit: contain !important;
+    border-radius: 12px !important;
 }
 
-.status-simulation {
-    background: rgba(245, 158, 11, 0.2) !important;
-    color: #FEF3C7 !important;
+.spot-mascot-image {
+    max-width: 220px !important;
+    margin: 0 auto !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
 }
 
-.status-simulation::before {
-    background: #F59E0B;
+/* === CHAT INPUT AREA - Cyan/teal background === */
+.spot-input-container {
+    background: var(--rg-panel) !important;
+    border-radius: 12px !important;
+    padding: 12px !important;
+    margin: 15px 0 !important;
+    border: 1px solid var(--rg-border) !important;
+    box-shadow: 0 2px 6px rgba(15, 23, 42, 0.04) !important;
 }
 
-.status-offline {
-    background: rgba(239, 68, 68, 0.2) !important;
-    color: #FEE2E2 !important;
+.spot-input-row {
+    display: flex !important;
+    align-items: center !important;
+    gap: 10px !important;
 }
 
-.status-offline::before {
-    background: #EF4444;
+.spot-attach-btn {
+    min-width: 44px !important;
+    width: 44px !important;
+    height: 44px !important;
+    border-radius: 50% !important;
+    background: var(--rg-panel) !important;
+    border: 2px solid #D3DCE8 !important;
+    cursor: pointer !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    font-size: 1.2rem !important;
+    transition: all 0.2s ease !important;
+    padding: 0 !important;
 }
 
-/* === CARD SECTIONS === */
-.ranger-card {
-    background: white !important;
-    border: 1px solid #E2E8F0 !important;
+.spot-attach-btn:hover {
+    border-color: var(--rg-primary) !important;
+    background: #EAF2FB !important;
+}
+
+.spot-input-field textarea {
+    border: none !important;
+    border-radius: 8px !important;
+    padding: 12px 16px !important;
+    background: var(--rg-panel) !important;
+    font-size: 1rem !important;
+    color: var(--rg-ink) !important;
+    caret-color: var(--rg-primary-strong) !important;
+    min-height: 46px !important;
+    line-height: 1.4 !important;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08) !important;
+}
+
+.spot-input-field textarea::placeholder {
+    color: #9AA7B5 !important;
+}
+
+.spot-input-field textarea:focus {
+    outline: none !important;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.1), 0 0 0 2px rgba(74, 144, 226, 0.2) !important;
+}
+
+.spot-send-btn {
+    padding: 12px 24px !important;
+    border-radius: 8px !important;
+    background: #E5ECF5 !important;
+    color: #4B5B6C !important;
+    border: none !important;
+    cursor: pointer !important;
+    transition: all 0.2s ease !important;
+    font-weight: 600 !important;
+    min-width: 80px !important;
+}
+
+.spot-send-btn:hover {
+    background: var(--rg-primary) !important;
+    color: white !important;
+}
+
+/* === MESSAGE CARDS === */
+.spot-messages-container {
+    margin-top: 15px !important;
+}
+
+.spot-message-card {
+    background: var(--rg-panel) !important;
+    border: 1px solid var(--rg-border) !important;
+    border-radius: 12px !important;
+    margin: 15px 0 !important;
+    overflow: hidden !important;
+    box-shadow: 0 4px 10px rgba(15, 23, 42, 0.05) !important;
+}
+
+.spot-message-header {
+    display: flex !important;
+    justify-content: space-between !important;
+    align-items: center !important;
+    padding: 10px 16px !important;
+    background: #F9FBFD !important;
+    border-bottom: 1px solid #E6ECF4 !important;
+}
+
+.spot-message-header-text {
+    font-weight: 600 !important;
+    color: var(--rg-ink) !important;
+}
+
+.spot-message-actions {
+    display: flex !important;
+    gap: 8px !important;
+}
+
+.spot-action-btn {
+    width: 28px !important;
+    height: 28px !important;
+    border: none !important;
+    background: transparent !important;
+    cursor: pointer !important;
+    border-radius: 4px !important;
+    font-size: 1rem !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    transition: background 0.2s ease !important;
+}
+
+.spot-action-btn:hover {
+    background: #EEF3FA !important;
+}
+
+.spot-action-btn.play-btn {
+    color: var(--rg-primary-strong) !important;
+}
+
+.spot-action-btn.delete-btn {
+    color: #EF4444 !important;
+}
+
+.spot-query-section {
+    padding: 12px 16px !important;
+    background: var(--rg-query) !important;
+    border-bottom: 1px solid #D7E9FF !important;
+}
+
+.spot-query-label {
+    font-weight: 600 !important;
+    color: var(--rg-ink) !important;
+    margin-bottom: 6px !important;
+    font-size: 0.9rem !important;
+}
+
+.spot-query-text {
+    color: #2E3A49 !important;
+    font-size: 0.95rem !important;
+}
+
+.spot-response-section {
+    padding: 12px 16px !important;
+    background: var(--rg-response) !important;
+}
+
+.spot-response-label {
+    font-weight: 600 !important;
+    color: var(--rg-ink) !important;
+    margin-bottom: 6px !important;
+    font-size: 0.9rem !important;
+}
+
+.spot-response-content {
+    color: #2E3A49 !important;
+    font-size: 0.95rem !important;
+    line-height: 1.5 !important;
+}
+
+.spot-response-image-label {
+    color: var(--rg-muted) !important;
+    font-size: 0.85rem !important;
+    margin-bottom: 8px !important;
+}
+
+.spot-message-image {
+    max-width: 100% !important;
+    border-radius: 8px !important;
+    margin: 10px 0 !important;
+    border: 1px solid var(--rg-border) !important;
+}
+
+.spot-timestamp {
+    font-size: 0.75rem !important;
+    color: #8A96A6 !important;
+    padding: 8px 16px !important;
+    background: #F9FBFD !important;
+    border-top: 1px solid #E6ECF4 !important;
+}
+
+/* === HIDE DEFAULT GRADIO TAB BUTTONS === */
+.tab-nav,
+#main-tabs .tab-nav,
+#main-tabs > .tab-nav,
+#main-tabs > div > .tab-nav,
+#main-tabs [role="tablist"],
+#main-tabs button[role="tab"] {
+    display: none !important;
+}
+
+/* === STATUS TAB STYLING === */
+.status-card {
+    background: var(--rg-panel) !important;
+    border: 1px solid var(--rg-border) !important;
     border-radius: 12px !important;
     padding: 16px !important;
     margin-bottom: 12px !important;
-    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1) !important;
-    transition: box-shadow 0.2s ease, transform 0.2s ease !important;
+    box-shadow: 0 2px 6px rgba(15, 23, 42, 0.04) !important;
 }
 
-.ranger-card:hover {
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1) !important;
-}
-
-.ranger-card-title {
+.status-card-title {
     font-size: 0.875rem !important;
     font-weight: 600 !important;
-    color: #475569 !important;
+    color: #4A5A6A !important;
     text-transform: uppercase !important;
     letter-spacing: 0.05em !important;
     margin-bottom: 12px !important;
     padding-bottom: 8px !important;
-    border-bottom: 1px solid #E2E8F0 !important;
+    border-bottom: 1px solid var(--rg-border) !important;
 }
 
 /* === BATTERY INDICATOR === */
@@ -241,7 +480,7 @@ footer { display: none !important; }
 .battery-bar-wrapper {
     width: 100% !important;
     height: 24px !important;
-    background: #E2E8F0 !important;
+    background: #E5ECF5 !important;
     border-radius: 12px !important;
     overflow: hidden !important;
     position: relative !important;
@@ -279,63 +518,9 @@ footer { display: none !important; }
 
 .battery-status {
     font-size: 0.75rem !important;
-    color: #64748B !important;
+    color: #6B7B8C !important;
     text-align: center !important;
     margin-top: 6px !important;
-}
-
-/* === CONTROL PAD === */
-.control-pad-container {
-    display: flex !important;
-    justify-content: center !important;
-    padding: 8px 0 !important;
-}
-
-.control-pad {
-    display: grid !important;
-    grid-template-columns: repeat(3, 1fr) !important;
-    grid-template-rows: repeat(3, 1fr) !important;
-    gap: 8px !important;
-    width: 180px !important;
-}
-
-.control-btn {
-    width: 52px !important;
-    height: 52px !important;
-    border-radius: 50% !important;
-    border: 2px solid #E2E8F0 !important;
-    background: white !important;
-    color: #4F46E5 !important;
-    font-size: 1.25rem !important;
-    font-weight: bold !important;
-    cursor: pointer !important;
-    transition: all 0.15s ease !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05) !important;
-}
-
-.control-btn:hover {
-    background: #EEF2FF !important;
-    border-color: #4F46E5 !important;
-    transform: scale(1.05) !important;
-}
-
-.control-btn:active {
-    transform: scale(0.95) !important;
-    background: #E0E7FF !important;
-}
-
-.control-btn-stop {
-    background: #FEE2E2 !important;
-    color: #EF4444 !important;
-    border-color: #FECACA !important;
-}
-
-.control-btn-stop:hover {
-    background: #FEE2E2 !important;
-    border-color: #EF4444 !important;
 }
 
 /* === EMERGENCY STOP BUTTON === */
@@ -361,15 +546,11 @@ footer { display: none !important; }
     transform: translateY(-2px) !important;
 }
 
-.emergency-stop-btn:active {
-    transform: translateY(0) !important;
-}
-
 /* === CAMERA FEED === */
 .camera-container {
     border-radius: 8px !important;
     overflow: hidden !important;
-    background: #1E293B !important;
+    background: #E5ECF5 !important;
 }
 
 .camera-container img {
@@ -378,61 +559,83 @@ footer { display: none !important; }
     display: block !important;
 }
 
-.camera-placeholder {
-    display: flex !important;
+/* === STATUS BADGES === */
+.status-badge {
+    display: inline-flex !important;
     align-items: center !important;
-    justify-content: center !important;
-    height: 160px !important;
-    color: #64748B !important;
+    padding: 6px 14px !important;
+    border-radius: 9999px !important;
+    font-size: 0.75rem !important;
+    font-weight: 600 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.05em !important;
+    gap: 6px !important;
+}
+
+.status-badge::before {
+    content: '';
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+}
+
+.status-online {
+    background: rgba(16, 185, 129, 0.15) !important;
+    color: #059669 !important;
+}
+
+.status-online::before {
+    background: #10B981;
+    animation: pulse-dot 2s infinite;
+}
+
+.status-simulation {
+    background: rgba(245, 158, 11, 0.15) !important;
+    color: #D97706 !important;
+}
+
+.status-simulation::before {
+    background: #F59E0B;
+}
+
+.status-offline {
+    background: rgba(239, 68, 68, 0.15) !important;
+    color: #DC2626 !important;
+}
+
+.status-offline::before {
+    background: #EF4444;
+}
+
+/* === FOOTER === */
+.spot-footer {
+    text-align: center !important;
+    padding: 30px 0 !important;
+    color: #6B7B8C !important;
     font-size: 0.875rem !important;
-}
-
-/* === CHAT STYLING === */
-.chat-card {
-    height: 100% !important;
-}
-
-.chat-card .chatbot {
-    border: none !important;
-    background: transparent !important;
-}
-
-/* === INPUT STYLING === */
-.ranger-input textarea {
-    border: 2px solid #E2E8F0 !important;
-    border-radius: 10px !important;
-    padding: 12px 16px !important;
-    font-size: 0.95rem !important;
-    transition: all 0.2s ease !important;
-}
-
-.ranger-input textarea:focus {
-    border-color: #4F46E5 !important;
-    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1) !important;
-    outline: none !important;
+    border-top: 1px solid var(--rg-border) !important;
+    margin-top: 20px !important;
 }
 
 /* === QUICK ACTION BUTTONS === */
 .quick-actions {
-    display: flex !important;
-    gap: 8px !important;
-    flex-wrap: wrap !important;
+    display: none !important;
 }
 
-.quick-action-btn {
-    font-size: 0.75rem !important;
-    padding: 6px 12px !important;
-    border-radius: 6px !important;
-    background: #F1F5F9 !important;
-    color: #475569 !important;
-    border: 1px solid #E2E8F0 !important;
-    cursor: pointer !important;
-    transition: all 0.15s ease !important;
+/* === SETTINGS TAB === */
+.settings-section {
+    background: var(--rg-panel) !important;
+    border: 1px solid var(--rg-border) !important;
+    border-radius: 12px !important;
+    padding: 20px !important;
+    margin-bottom: 15px !important;
 }
 
-.quick-action-btn:hover {
-    background: #E2E8F0 !important;
-    border-color: #CBD5E1 !important;
+.settings-title {
+    font-size: 1rem !important;
+    font-weight: 600 !important;
+    color: var(--rg-ink) !important;
+    margin-bottom: 15px !important;
 }
 
 /* === ANIMATIONS === */
@@ -452,33 +655,25 @@ footer { display: none !important; }
 
 /* === RESPONSIVE DESIGN === */
 @media (max-width: 768px) {
-    .ranger-header-content {
-        flex-direction: column !important;
-        text-align: center !important;
+    .gradio-container {
+        padding: 16px !important;
     }
 
-    .ranger-header-left {
-        flex-direction: column !important;
+    .spot-title {
+        font-size: 1.5rem !important;
     }
 
-    .control-pad {
+    .spot-mascot img {
         width: 150px !important;
     }
 
-    .control-btn {
-        width: 44px !important;
-        height: 44px !important;
-        font-size: 1rem !important;
+    .spot-nav {
+        flex-wrap: wrap !important;
     }
-}
 
-/* === MANUAL OUTPUT === */
-.manual-output textarea {
-    font-size: 0.8rem !important;
-    color: #64748B !important;
-    background: #F8FAFC !important;
-    border: 1px solid #E2E8F0 !important;
-    border-radius: 6px !important;
+    .spot-input-row {
+        flex-wrap: wrap !important;
+    }
 }
 """
 
@@ -606,7 +801,7 @@ class RangerUINode:
                 <div class="ranger-header-left">
                     {logo_html}
                     <div class="ranger-title">
-                        <h1>Ranger Garden Robot</h1>
+                        <h1>Robot Garden Assistant</h1>
                         <p>Natural Language Control Interface</p>
                     </div>
                 </div>
@@ -664,6 +859,154 @@ class RangerUINode:
             <div class="battery-status">{status.title()}</div>
         </div>
         '''
+
+    def _get_spot_header_html(self) -> str:
+        """Generate Spot Agent style header with navigation links."""
+        status_html = self._get_connection_status_html()
+
+        return f'''
+        <div class="spot-header">
+            <h1 class="spot-title">Robot Garden Assistant</h1>
+            <nav class="spot-nav" id="spot-nav">
+                <button class="spot-nav-link active" id="nav-home">Home</button>
+                <span class="spot-nav-separator">|</span>
+                <button class="spot-nav-link" id="nav-status">Status</button>
+                <span class="spot-nav-separator">|</span>
+                <button class="spot-nav-link" id="nav-settings">Settings</button>
+            </nav>
+        </div>
+        <script>
+            function getGradioRoot() {{
+                const app = document.querySelector('gradio-app');
+                if (app && app.shadowRoot) {{
+                    return app.shadowRoot;
+                }}
+                return document;
+            }}
+
+            function setActiveNav(index) {{
+                const root = getGradioRoot();
+                root.querySelectorAll('.spot-nav-link').forEach((link, i) => {{
+                    if (i === index) {{
+                        link.classList.add('active');
+                    }} else {{
+                        link.classList.remove('active');
+                    }}
+                }});
+            }}
+
+            function switchToTab(index) {{
+                const root = getGradioRoot();
+                const tabButtons = root.querySelectorAll('#main-tabs .tab-nav button, #main-tabs [role="tablist"] button, #main-tabs button[role="tab"]');
+                if (tabButtons[index]) {{
+                    tabButtons[index].click();
+                }}
+                setActiveNav(index);
+            }}
+
+            function syncNavToTabs() {{
+                const root = getGradioRoot();
+                const tabButtons = root.querySelectorAll('#main-tabs .tab-nav button, #main-tabs [role="tablist"] button, #main-tabs button[role="tab"]');
+                tabButtons.forEach((btn, i) => {{
+                    if (btn.getAttribute('aria-selected') === 'true' || btn.classList.contains('selected')) {{
+                        setActiveNav(i);
+                    }}
+                }});
+            }}
+
+            function attachNavHandlers() {{
+                const root = getGradioRoot();
+                const navButtons = root.querySelectorAll('.spot-nav-link');
+                navButtons.forEach((btn, i) => {{
+                    btn.addEventListener('click', () => switchToTab(i));
+                }});
+            }}
+
+            setTimeout(() => {{
+                const app = document.querySelector('gradio-app');
+                if (app) {{
+                    app.setAttribute('data-color-mode', 'light');
+                }}
+                attachNavHandlers();
+                syncNavToTabs();
+            }}, 0);
+        </script>
+        '''
+
+    def _get_mascot_html(self) -> str:
+        """Generate larger centered robot mascot image."""
+        avatar_path = "file=" + str(ROBOT_AVATAR_PATH) if ROBOT_AVATAR_PATH.exists() else ""
+        if avatar_path:
+            return f'''
+            <div class="spot-mascot">
+                <img src="{avatar_path}" alt="Ranger Robot">
+            </div>
+            '''
+        return '<div class="spot-mascot"><p>Robot Avatar</p></div>'
+
+    def _get_footer_html(self) -> str:
+        """Generate ROSA branding footer."""
+        current_year = datetime.now().year
+        return f'''
+        <div class="spot-footer">
+            Ranger Garden Assistant
+        </div>
+        '''
+
+    def _render_messages_html(self, history: list[dict]) -> str:
+        """
+        Render message history as custom HTML cards.
+
+        Args:
+            history: List of message dicts with 'user', 'assistant', 'timestamp', and optional 'image'
+
+        Returns:
+            HTML string of message cards
+        """
+        if not history:
+            return '<div class="spot-messages-container"><p style="text-align: center; color: #999; padding: 20px;">No messages yet. Start a conversation!</p></div>'
+
+        html_parts = ['<div class="spot-messages-container">']
+
+        for idx, msg in enumerate(history):
+            user_content = msg.get("user", "")
+            assistant_content = msg.get("assistant", "")
+            timestamp = msg.get("timestamp", "")
+            image_data = msg.get("image", None)
+
+            # Build image HTML if present
+            image_html = ""
+            if image_data:
+                image_html = f'''
+                <div class="spot-response-image-label">RGB + Depth</div>
+                <img src="{image_data}" class="spot-message-image" alt="Camera image">
+                '''
+
+            card_html = f'''
+            <div class="spot-message-card" data-index="{idx}">
+                <div class="spot-message-header">
+                    <span class="spot-message-header-text">Response</span>
+                    <div class="spot-message-actions">
+                        <button class="spot-action-btn play-btn" title="Play (TTS)">▶</button>
+                        <button class="spot-action-btn delete-btn" title="Delete">🗑</button>
+                    </div>
+                </div>
+                <div class="spot-query-section">
+                    <div class="spot-query-label">Query:</div>
+                    <div class="spot-query-text">{user_content}</div>
+                </div>
+                <div class="spot-response-section">
+                    <div class="spot-response-label">Response:</div>
+                    {image_html}
+                    <div class="spot-response-content">{assistant_content}</div>
+                </div>
+                <div class="spot-timestamp">Timestamp: {timestamp}</div>
+            </div>
+            '''
+            html_parts.append(card_html)
+
+        html_parts.append('</div>')
+        return "".join(html_parts)
 
     def chat_response(
         self, message: str, history: list[dict]
@@ -753,168 +1096,254 @@ class RangerUINode:
         return "Agent not initialized"
 
     def create_ui(self) -> gr.Blocks:
-        """Create the professional Gradio UI interface."""
-
-        # Get avatar path for chatbot
-        avatar_path = str(ROBOT_AVATAR_PATH) if ROBOT_AVATAR_PATH.exists() else None
+        """Create the Spot Agent style Gradio UI interface."""
 
         with gr.Blocks(
-            title="Ranger Garden Robot",
+            title="Robot Garden Assistant",
         ) as demo:
 
-            # === HEADER BAR ===
-            gr.HTML(self._get_header_html())
+            # === HEADER WITH NAV LINKS ===
+            gr.HTML(self._get_spot_header_html())
 
-            # === MAIN CONTENT ===
-            with gr.Row():
+            # === ROBOT MASCOT ===
+            with gr.Row(elem_classes=["spot-mascot"]):
+                mascot_value = str(ROBOT_AVATAR_PATH) if ROBOT_AVATAR_PATH.exists() else None
+                gr.Image(
+                    value=mascot_value,
+                    show_label=False,
+                    interactive=False,
+                    container=False,
+                    elem_classes=["spot-mascot-image"],
+                )
 
-                # === LEFT COLUMN: Chat Interface ===
-                with gr.Column(scale=3):
-                    with gr.Group(elem_classes=["ranger-card", "chat-card"]):
-                        gr.HTML('<div class="ranger-card-title">💬 Chat Interface</div>')
+            # === TABBED CONTENT (hidden native tab buttons) ===
+            with gr.Tabs(elem_id="main-tabs") as tabs:
 
-                        chatbot = gr.Chatbot(
-                            show_label=False,
-                            height=460,
-                            avatar_images=(None, avatar_path),
-                        )
+                # === HOME TAB - Chat Interface ===
+                with gr.Tab("Home", id=0):
 
-                        with gr.Row():
+                    # Chat input area with cyan background
+                    with gr.Group(elem_classes=["spot-input-container"]):
+                        with gr.Row(elem_classes=["spot-input-row"]):
                             msg = gr.Textbox(
-                                placeholder="Type a command (e.g., 'move forward 1 meter', 'check battery')...",
+                                placeholder="all right can you describe what you see in the camera",
                                 show_label=False,
                                 container=False,
                                 scale=5,
-                                elem_classes=["ranger-input"],
+                                elem_classes=["spot-input-field"],
                             )
                             submit_btn = gr.Button(
                                 "Send",
-                                variant="primary",
-                                scale=1,
-                                min_width=100,
+                                elem_classes=["spot-send-btn"],
+                                min_width=80,
                             )
 
-                        with gr.Row(elem_classes=["quick-actions"]):
-                            clear_btn = gr.Button("Clear Chat", size="sm", variant="secondary")
-                            example_btn1 = gr.Button("Check Status", size="sm", variant="secondary")
-                            example_btn2 = gr.Button("Get Position", size="sm", variant="secondary")
+                    # Quick action buttons
+                    with gr.Row(elem_classes=["quick-actions"]):
+                        clear_btn = gr.Button("Clear Chat", size="sm", variant="secondary")
+                        example_btn1 = gr.Button("Check Status", size="sm", variant="secondary")
+                        example_btn2 = gr.Button("Get Camera", size="sm", variant="secondary")
 
-                # === RIGHT COLUMN: Status & Controls ===
-                with gr.Column(scale=1, min_width=300):
+                    # Message history state (for card-based display)
+                    message_history = gr.State([])
 
-                    # --- Emergency Stop (Prominent) ---
+                    # Messages display (custom HTML cards)
+                    messages_html = gr.HTML(
+                        value=self._render_messages_html([]),
+                        elem_classes=["spot-messages-container"],
+                    )
+
+                # === STATUS TAB ===
+                with gr.Tab("Status", id=1):
+
+                    # Emergency Stop (Prominent)
                     stop_btn = gr.Button(
                         "🛑 EMERGENCY STOP",
                         variant="stop",
                         elem_classes=["emergency-stop-btn"],
                         size="lg",
                     )
+                    stop_output = gr.Textbox(
+                        show_label=False,
+                        interactive=False,
+                        lines=1,
+                        placeholder="Emergency stop feedback...",
+                        visible=True,
+                    )
 
-                    # --- Status Card ---
-                    with gr.Group(elem_classes=["ranger-card"]):
-                        gr.HTML('<div class="ranger-card-title">📊 System Status</div>')
-
+                    # Battery Status Card
+                    with gr.Group(elem_classes=["status-card"]):
+                        gr.HTML('<div class="status-card-title">📊 Battery Status</div>')
                         battery_html = gr.HTML(
                             value=self._get_battery_html(),
                         )
-
                         refresh_btn = gr.Button(
                             "Refresh Status",
                             size="sm",
                             variant="secondary",
                         )
 
-                    # --- Camera Card ---
-                    with gr.Group(elem_classes=["ranger-card"]):
-                        gr.HTML('<div class="ranger-card-title">📷 Camera Feed</div>')
-
+                    # Camera Feed Card
+                    with gr.Group(elem_classes=["status-card"]):
+                        gr.HTML('<div class="status-card-title">📷 Camera Feed</div>')
                         with gr.Column(elem_classes=["camera-container"]):
                             camera_image = gr.Image(
                                 value=self.get_camera_image(),
                                 show_label=False,
-                                height=180,
+                                height=240,
                                 container=False,
                             )
-
                         camera_refresh_btn = gr.Button(
                             "Refresh Camera",
                             size="sm",
                             variant="secondary",
                         )
 
-                    # --- Manual Controls Card ---
-                    with gr.Group(elem_classes=["ranger-card"]):
-                        gr.HTML('<div class="ranger-card-title">🎮 Manual Controls</div>')
+                # === SETTINGS TAB ===
+                with gr.Tab("Settings", id=2):
+                    with gr.Group(elem_classes=["settings-section"]):
+                        gr.HTML('<div class="settings-title">⚙️ Configuration</div>')
+                        gr.Markdown("""
+                        **LLM Provider:** Configure your language model settings
 
-                        # Control pad using Gradio buttons in grid layout
-                        with gr.Column(elem_classes=["control-pad-container"]):
-                            with gr.Row():
-                                gr.HTML('<div style="width: 52px;"></div>')
-                                fwd_btn = gr.Button("↑", elem_classes=["control-btn"], min_width=52)
-                                gr.HTML('<div style="width: 52px;"></div>')
+                        Settings functionality coming soon. For now, configure via:
+                        - Environment variables (.env file)
+                        - Command line arguments
 
-                            with gr.Row():
-                                left_btn = gr.Button("←", elem_classes=["control-btn"], min_width=52)
-                                stop_manual_btn = gr.Button("■", elem_classes=["control-btn", "control-btn-stop"], min_width=52)
-                                right_btn = gr.Button("→", elem_classes=["control-btn"], min_width=52)
+                        See documentation for details.
+                        """)
 
-                            with gr.Row():
-                                gr.HTML('<div style="width: 52px;"></div>')
-                                back_btn = gr.Button("↓", elem_classes=["control-btn"], min_width=52)
-                                gr.HTML('<div style="width: 52px;"></div>')
-
-                        manual_output = gr.Textbox(
-                            show_label=False,
-                            interactive=False,
-                            lines=1,
-                            placeholder="Control feedback...",
-                            elem_classes=["manual-output"],
+                    with gr.Group(elem_classes=["settings-section"]):
+                        gr.HTML('<div class="settings-title">📡 Connection</div>')
+                        connection_status = gr.HTML(
+                            value=self._get_connection_status_html(),
                         )
+                        gr.Button("Refresh Connection", size="sm", variant="secondary")
+
+            # === FOOTER ===
+            gr.HTML(self._get_footer_html())
 
             # === EVENT HANDLERS ===
 
-            # Chat submission
+            # Chat submission - uses new card-based display
+            def process_chat(message: str, history: list[dict]):
+                """Process chat and return updated history with HTML."""
+                if not message.strip():
+                    return "", history, self._render_messages_html(history)
+
+                if not self.agent:
+                    timestamp = datetime.now().strftime("%m/%d/%Y, %I:%M:%S %p")
+                    new_entry = {
+                        "user": message,
+                        "assistant": "Agent not initialized. Please check configuration.",
+                        "timestamp": timestamp,
+                        "image": None,
+                    }
+                    history.append(new_entry)
+                    return "", history, self._render_messages_html(history)
+
+                try:
+                    # Get response from agent
+                    result = self.agent.invoke(message)
+                    output = result.get("output", "I couldn't process that request.")
+
+                    # Check for intermediate steps to show tool usage
+                    intermediate_steps = result.get("intermediate_steps", [])
+                    if intermediate_steps:
+                        tool_info = []
+                        for action, observation in intermediate_steps:
+                            tool_name = action.tool if hasattr(action, 'tool') else str(action)
+                            tool_info.append(f"Used tool: {tool_name}")
+                        if tool_info:
+                            output = "\n".join(tool_info) + "\n\n" + output
+
+                    # Optional: Show token usage
+                    if os.getenv("SHOW_LLM_USAGE", "").lower() in {"1", "true", "yes", "on"}:
+                        usage = result.get("usage") or {}
+                        total_tokens = usage.get("total_tokens")
+                        if total_tokens:
+                            cost = usage.get("total_cost_usd")
+                            cost_str = f", cost ${cost:.6f}" if isinstance(cost, (int, float)) else ""
+                            output = (
+                                f"{output}\n\n---\n"
+                                f"Tokens: prompt {usage.get('prompt_tokens', 0)}, "
+                                f"completion {usage.get('completion_tokens', 0)}, total {total_tokens}{cost_str}"
+                            )
+
+                    # Extract image data if present (from camera tool)
+                    image_data = None
+                    if "data:image" in output:
+                        match = re.search(r'!\[.*?\]\((data:image[^)]+)\)', output)
+                        if match:
+                            image_data = match.group(1)
+                            # Remove image markdown from text output
+                            output = re.sub(r'!\[.*?\]\(data:image[^)]+\)', '', output).strip()
+
+                    # Create timestamp
+                    timestamp = datetime.now().strftime("%m/%d/%Y, %I:%M:%S %p")
+
+                    # Add to history
+                    new_entry = {
+                        "user": message,
+                        "assistant": output,
+                        "timestamp": timestamp,
+                        "image": image_data,
+                    }
+                    history.append(new_entry)
+
+                    return "", history, self._render_messages_html(history)
+
+                except Exception as e:
+                    logger.error(f"Chat error: {e}")
+                    timestamp = datetime.now().strftime("%m/%d/%Y, %I:%M:%S %p")
+                    new_entry = {
+                        "user": message,
+                        "assistant": f"Error: {str(e)}",
+                        "timestamp": timestamp,
+                        "image": None,
+                    }
+                    history.append(new_entry)
+                    return "", history, self._render_messages_html(history)
+
             submit_btn.click(
-                fn=self.chat_response,
-                inputs=[msg, chatbot],
-                outputs=[chatbot],
-            ).then(
-                fn=lambda: "",
-                outputs=[msg],
+                fn=process_chat,
+                inputs=[msg, message_history],
+                outputs=[msg, message_history, messages_html],
             )
 
             msg.submit(
-                fn=self.chat_response,
-                inputs=[msg, chatbot],
-                outputs=[chatbot],
-            ).then(
-                fn=lambda: "",
-                outputs=[msg],
+                fn=process_chat,
+                inputs=[msg, message_history],
+                outputs=[msg, message_history, messages_html],
+            )
+
+            # Clear chat
+            def clear_chat():
+                return [], self._render_messages_html([])
+
+            clear_btn.click(
+                fn=clear_chat,
+                outputs=[message_history, messages_html],
             )
 
             # Quick action buttons
-            clear_btn.click(
-                fn=lambda: [],
-                outputs=[chatbot],
-            )
-
             example_btn1.click(
                 fn=lambda: "What's my current status?",
                 outputs=[msg],
             )
 
             example_btn2.click(
-                fn=lambda: "What's my current position?",
+                fn=lambda: "Show me what the camera sees",
                 outputs=[msg],
             )
 
             # Emergency stop
             stop_btn.click(
                 fn=self.emergency_stop,
-                outputs=[manual_output],
+                outputs=[stop_output],
             )
 
-            # Status refresh (returns HTML now)
+            # Status refresh
             refresh_btn.click(
                 fn=self._get_battery_html,
                 outputs=[battery_html],
@@ -925,13 +1354,6 @@ class RangerUINode:
                 fn=self.get_camera_image,
                 outputs=[camera_image],
             )
-
-            # Manual control handlers
-            fwd_btn.click(fn=self.teleop_forward, outputs=[manual_output])
-            back_btn.click(fn=self.teleop_backward, outputs=[manual_output])
-            left_btn.click(fn=self.teleop_left, outputs=[manual_output])
-            right_btn.click(fn=self.teleop_right, outputs=[manual_output])
-            stop_manual_btn.click(fn=self.emergency_stop, outputs=[manual_output])
 
         return demo
 
