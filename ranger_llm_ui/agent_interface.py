@@ -1,29 +1,44 @@
 """
-Agent Interface - LangChain agent integration for Ranger robot.
+Agent Interface - LangChain agent integration for Ranger robot using ROSA.
 
-This module provides the RangerAgent class that integrates the LangChain
-agent framework with Ranger-specific tools. It supports multiple LLM
-backends (OpenAI, Ollama, etc.) through a provider abstraction.
+This module provides the RangerAgent class that integrates NASA JPL's ROSA
+(Robot Operating System Agent) from the ros-technician-cli submodule with
+Ranger-specific tools and prompts.
 
 The agent:
-- Interprets natural language commands from users
-- Selects appropriate tools to fulfill requests
-- Executes robot actions through the tool registry
+- Uses ROSA as the base agent framework (from ros-technician-cli submodule)
+- Extends ROSA with Ranger-specific tools (movement, status)
+- Configures Ranger-specific prompts and persona
+- Supports multiple LLM backends (OpenAI, Ollama, etc.)
 - Streams responses and intermediate steps to the UI
+
+Architecture:
+    User Input -> RangerAgent (wraps ROSA) -> Ranger Tools + ROSA ROS2 Tools -> Robot
 """
 
 import os
+import sys
 import logging
-from typing import Optional, Any, AsyncIterator, Union
+from typing import Optional, Any, AsyncIterator, Union, Literal
 from enum import Enum
 
-from langchain.agents import AgentExecutor, create_react_agent
-from langchain_core.prompts import PromptTemplate
-from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
-from langchain.tools import BaseTool
+# Add ros-technician-cli submodule to path for ROSA imports
+_submodule_src = os.path.join(os.path.dirname(__file__), '..', 'ros-technician-cli', 'src')
+if os.path.exists(_submodule_src) and _submodule_src not in sys.path:
+    sys.path.insert(0, os.path.abspath(_submodule_src))
 
+# Import ROSA from the submodule
+from rosa import ROSA, RobotSystemPrompts
+
+# Import LangChain components for LLM creation
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, AIMessage
+
+# Import Ranger-specific components
 from ranger_llm_ui.tools.all_tools import get_all_tools, initialize_all_tools
+from ranger_llm_ui.tools.movement_tools import get_movement_tools
+from ranger_llm_ui.tools.status_tools import get_status_tools
+from ranger_llm_ui.ranger_prompts import get_ranger_prompts, RANGER_PROMPTS
 from ranger_llm_ui.utils.logger import get_command_logger
 
 logger = logging.getLogger(__name__)
@@ -36,50 +51,13 @@ class LLMProvider(str, Enum):
     ANTHROPIC = "anthropic"
 
 
-# Default system prompt for the Ranger agent
-RANGER_SYSTEM_PROMPT = """You are a helpful robot assistant for the Ranger garden robot.
-You help operators control the robot using natural language commands.
-
-You have access to the following tools:
-
-{tools}
-
-IMPORTANT SAFETY RULES:
-1. Always prioritize safety. If a command seems dangerous, ask for confirmation.
-2. Only use the tools provided. Do not invent new capabilities.
-3. If you cannot fulfill a request with the available tools, explain what you can do instead.
-4. For large movements (>2 meters), mention that this is a significant distance.
-5. If the user says "stop" or "emergency", immediately use the StopRobot tool.
-
-When responding:
-- Be concise and clear
-- Report the result of any action you take
-- If an action fails, explain what went wrong
-- Proactively mention relevant status information (like battery level after movement)
-
-Use the following format:
-
-Question: the input question or command you must respond to
-Thought: think about what to do
-Action: the action to take, should be one of [{tool_names}]
-Action Input: the input to the action
-Observation: the result of the action
-... (this Thought/Action/Action Input/Observation can repeat N times)
-Thought: I now know the final answer
-Final Answer: the final answer or response to the user
-
-Begin!
-
-Question: {input}
-Thought: {agent_scratchpad}"""
-
-
 def create_llm(
     provider: LLMProvider = LLMProvider.OPENAI,
     model_name: Optional[str] = None,
     temperature: float = 0.0,
+    streaming: bool = True,
     **kwargs,
-) -> BaseChatModel:
+):
     """
     Create an LLM instance based on the provider.
 
@@ -87,16 +65,14 @@ def create_llm(
         provider: LLM provider (openai, ollama, anthropic)
         model_name: Model name (defaults to provider's default)
         temperature: Temperature for generation
+        streaming: Enable streaming responses
         **kwargs: Additional provider-specific arguments
 
     Returns:
-        BaseChatModel instance
+        LLM instance compatible with ROSA
     """
     if provider == LLMProvider.OPENAI:
-        try:
-            from langchain_openai import ChatOpenAI
-        except ImportError:
-            raise ImportError("Install langchain-openai: pip install langchain-openai")
+        from langchain_openai import ChatOpenAI
 
         api_key = kwargs.get("api_key") or os.getenv("OPENAI_API_KEY")
         if not api_key:
@@ -106,14 +82,12 @@ def create_llm(
             model=model_name or "gpt-4",
             temperature=temperature,
             api_key=api_key,
-            **{k: v for k, v in kwargs.items() if k != "api_key"},
+            streaming=streaming,
+            **{k: v for k, v in kwargs.items() if k not in ["api_key"]},
         )
 
     elif provider == LLMProvider.OLLAMA:
-        try:
-            from langchain_community.chat_models import ChatOllama
-        except ImportError:
-            raise ImportError("Install langchain-community: pip install langchain-community")
+        from langchain_ollama import ChatOllama
 
         base_url = kwargs.get("base_url") or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
@@ -121,7 +95,7 @@ def create_llm(
             model=model_name or "llama2",
             temperature=temperature,
             base_url=base_url,
-            **{k: v for k, v in kwargs.items() if k != "base_url"},
+            **{k: v for k, v in kwargs.items() if k not in ["base_url"]},
         )
 
     elif provider == LLMProvider.ANTHROPIC:
@@ -138,7 +112,7 @@ def create_llm(
             model=model_name or "claude-3-sonnet-20240229",
             temperature=temperature,
             api_key=api_key,
-            **{k: v for k, v in kwargs.items() if k != "api_key"},
+            **{k: v for k, v in kwargs.items() if k not in ["api_key"]},
         )
 
     else:
@@ -147,21 +121,27 @@ def create_llm(
 
 class RangerAgent:
     """
-    LangChain agent for the Ranger robot.
+    LangChain agent for the Ranger robot, built on NASA JPL's ROSA.
 
-    This agent interprets natural language commands and executes robot
-    actions through the tool registry. It supports streaming responses
-    and multiple LLM backends.
+    This agent wraps ROSA from the ros-technician-cli submodule and extends it
+    with Ranger-specific tools for movement and status queries. It inherits
+    ROSA's ROS2 introspection capabilities while adding robot control.
+
+    The integration follows the design document specification:
+    - Uses ROSA as the base agent (from submodule)
+    - Registers Ranger-specific tools with ROSA
+    - Configures Ranger-specific prompts
+    - Supports streaming responses for the Gradio UI
     """
 
     def __init__(
         self,
-        llm: Optional[BaseChatModel] = None,
+        llm=None,
         provider: LLMProvider = LLMProvider.OPENAI,
         model_name: Optional[str] = None,
-        tools: Optional[list[BaseTool]] = None,
         ros_node: Optional[Any] = None,
         verbose: bool = False,
+        streaming: bool = True,
     ):
         """
         Initialize the Ranger agent.
@@ -170,46 +150,53 @@ class RangerAgent:
             llm: Pre-configured LLM instance (optional)
             provider: LLM provider if llm not provided
             model_name: Model name if llm not provided
-            tools: Custom tools list (default: all Ranger tools)
             ros_node: ROS 2 node for tool initialization
             verbose: Enable verbose logging
+            streaming: Enable streaming responses (default: True)
         """
-        # Initialize tools with ROS node
-        self.tools = tools or initialize_all_tools(ros_node)
+        # Initialize Ranger-specific tools with ROS node
+        self._initialize_ranger_tools(ros_node)
 
         # Create or use provided LLM
-        if llm is not None:
-            self.llm = llm
-        else:
-            self.llm = create_llm(provider=provider, model_name=model_name)
+        if llm is None:
+            llm = create_llm(
+                provider=provider,
+                model_name=model_name,
+                streaming=streaming,
+            )
 
-        # Create prompt
-        self.prompt = PromptTemplate.from_template(RANGER_SYSTEM_PROMPT)
+        # Get Ranger-specific tools as LangChain tools
+        ranger_tools = get_all_tools()
 
-        # Create agent
-        self.agent = create_react_agent(
-            llm=self.llm,
-            tools=self.tools,
-            prompt=self.prompt,
-        )
+        # Get Ranger-specific prompts
+        ranger_prompts = get_ranger_prompts()
 
-        # Create executor
-        self.executor = AgentExecutor(
-            agent=self.agent,
-            tools=self.tools,
+        # Create ROSA instance with Ranger tools and prompts
+        # ROSA handles all the agent logic, tool binding, and execution
+        self._rosa = ROSA(
+            ros_version=2,  # ROS 2
+            llm=llm,
+            tools=ranger_tools,  # Add Ranger-specific tools
+            prompts=ranger_prompts,  # Ranger-specific prompts
             verbose=verbose,
-            handle_parsing_errors=True,
-            max_iterations=10,
+            streaming=streaming,
+            accumulate_chat_history=True,
             return_intermediate_steps=True,
         )
 
-        # Logger for conversation tracking
-        self.logger = get_command_logger()
+        # Command logger for tracking
+        self._logger = get_command_logger()
 
-        # Chat history
-        self.chat_history: list[BaseMessage] = []
+        logger.info(f"RangerAgent initialized with ROSA (ros-technician-cli submodule)")
+        logger.info(f"Ranger tools: {[t.name for t in ranger_tools]}")
 
-        logger.info(f"RangerAgent initialized with {len(self.tools)} tools")
+    def _initialize_ranger_tools(self, ros_node: Optional[Any]):
+        """Initialize Ranger tools with the ROS node."""
+        from ranger_llm_ui.tools.movement_tools import initialize_ros_interface
+        from ranger_llm_ui.tools.status_tools import initialize_status_interface
+
+        initialize_ros_interface(ros_node)
+        initialize_status_interface(ros_node)
 
     def invoke(self, user_input: str) -> dict:
         """
@@ -219,30 +206,24 @@ class RangerAgent:
             user_input: Natural language command from user
 
         Returns:
-            Dictionary with 'output' and 'intermediate_steps'
+            Dictionary with 'output' and optionally 'intermediate_steps'
         """
         # Log user input
-        self.logger.log_conversation(role="user", content=user_input)
-        self.chat_history.append(HumanMessage(content=user_input))
+        self._logger.log_conversation(role="user", content=user_input)
 
-        # Invoke agent
+        # Invoke ROSA agent
         try:
-            result = self.executor.invoke({
-                "input": user_input,
-                "chat_history": self.chat_history,
-            })
+            output = self._rosa.invoke(user_input)
 
             # Log assistant response
-            output = result.get("output", "")
-            self.logger.log_conversation(role="assistant", content=output)
-            self.chat_history.append(AIMessage(content=output))
+            self._logger.log_conversation(role="assistant", content=output)
 
-            return result
+            return {"output": output, "intermediate_steps": []}
 
         except Exception as e:
             logger.error(f"Agent error: {e}")
             error_msg = f"I encountered an error: {str(e)}"
-            self.logger.log_conversation(role="assistant", content=error_msg)
+            self._logger.log_conversation(role="assistant", content=error_msg)
             return {"output": error_msg, "intermediate_steps": []}
 
     async def astream(self, user_input: str) -> AsyncIterator[dict]:
@@ -256,69 +237,59 @@ class RangerAgent:
             Dictionaries with intermediate steps and final output
         """
         # Log user input
-        self.logger.log_conversation(role="user", content=user_input)
-        self.chat_history.append(HumanMessage(content=user_input))
+        self._logger.log_conversation(role="user", content=user_input)
 
         try:
-            async for event in self.executor.astream_events(
-                {"input": user_input, "chat_history": self.chat_history},
-                version="v1",
-            ):
-                kind = event["event"]
+            # Use ROSA's async streaming
+            async for event in self._rosa.astream(user_input):
+                event_type = event.get("type")
 
-                if kind == "on_chat_model_stream":
-                    # Streaming token from LLM
-                    content = event["data"]["chunk"].content
-                    if content:
-                        yield {"type": "token", "content": content}
+                if event_type == "token":
+                    yield {"type": "token", "content": event.get("content", "")}
 
-                elif kind == "on_tool_start":
-                    # Tool is starting
-                    tool_name = event["name"]
-                    tool_input = event["data"].get("input", {})
+                elif event_type == "tool_start":
                     yield {
                         "type": "tool_start",
-                        "tool": tool_name,
-                        "input": tool_input,
+                        "tool": event.get("name"),
+                        "input": event.get("input"),
                     }
 
-                elif kind == "on_tool_end":
-                    # Tool completed
-                    tool_output = event["data"].get("output", "")
+                elif event_type == "tool_end":
                     yield {
                         "type": "tool_end",
-                        "output": tool_output,
+                        "output": event.get("output"),
                     }
 
-                elif kind == "on_chain_end":
-                    # Final output
-                    if "output" in event["data"]:
-                        output = event["data"]["output"]
-                        if isinstance(output, dict) and "output" in output:
-                            final_output = output["output"]
-                            self.logger.log_conversation(role="assistant", content=final_output)
-                            self.chat_history.append(AIMessage(content=final_output))
-                            yield {"type": "final", "output": final_output}
+                elif event_type == "final":
+                    final_output = event.get("content", "")
+                    self._logger.log_conversation(role="assistant", content=final_output)
+                    yield {"type": "final", "output": final_output}
+
+                elif event_type == "error":
+                    error_msg = event.get("content", "Unknown error")
+                    self._logger.log_conversation(role="assistant", content=error_msg)
+                    yield {"type": "error", "error": error_msg}
 
         except Exception as e:
             logger.error(f"Streaming error: {e}")
             error_msg = f"I encountered an error: {str(e)}"
-            self.logger.log_conversation(role="assistant", content=error_msg)
+            self._logger.log_conversation(role="assistant", content=error_msg)
             yield {"type": "error", "error": error_msg}
 
     def clear_history(self):
         """Clear chat history."""
-        self.chat_history = []
+        self._rosa.clear_chat()
         logger.info("Chat history cleared")
 
     def get_tool_names(self) -> list[str]:
         """Get list of available tool names."""
-        return [tool.name for tool in self.tools]
+        # ROSA tools include both Ranger tools and ROS2 introspection tools
+        return [tool.name for tool in self._rosa._ROSA__tools.get_tools()]
 
     def get_chat_history(self) -> list[dict]:
         """Get chat history as list of dicts."""
         history = []
-        for msg in self.chat_history:
+        for msg in self._rosa.chat_history:
             if isinstance(msg, HumanMessage):
                 history.append({"role": "user", "content": msg.content})
             elif isinstance(msg, AIMessage):
@@ -328,7 +299,7 @@ class RangerAgent:
 
 class SimpleAgent:
     """
-    Simplified agent for basic testing without full LangChain setup.
+    Simplified agent for basic testing without full LangChain/ROSA setup.
 
     This agent provides basic command parsing without requiring an LLM,
     useful for testing the tool infrastructure.
@@ -352,18 +323,18 @@ class SimpleAgent:
         """
         self.logger.log_conversation(role="user", content=user_input)
 
-        user_input = user_input.lower().strip()
+        user_input_lower = user_input.lower().strip()
 
         # Parse simple commands
-        if "stop" in user_input:
+        if "stop" in user_input_lower:
             result = self.tool_map["stoprobot"].run({})
-        elif "battery" in user_input:
+        elif "battery" in user_input_lower:
             result = self.tool_map["batterystatus"].run({})
-        elif "status" in user_input or "health" in user_input:
+        elif "status" in user_input_lower or "health" in user_input_lower:
             result = self.tool_map["systemhealth"].run({})
-        elif "forward" in user_input:
+        elif "forward" in user_input_lower:
             # Extract distance
-            parts = user_input.split()
+            parts = user_input_lower.split()
             distance = 1.0
             for i, part in enumerate(parts):
                 if part == "forward" and i + 1 < len(parts):
@@ -372,8 +343,8 @@ class SimpleAgent:
                     except ValueError:
                         pass
             result = self.tool_map["moveforward"].run({"distance_m": distance})
-        elif "backward" in user_input or "back" in user_input:
-            parts = user_input.split()
+        elif "backward" in user_input_lower or "back" in user_input_lower:
+            parts = user_input_lower.split()
             distance = 1.0
             for i, part in enumerate(parts):
                 if part in ["backward", "back"] and i + 1 < len(parts):
@@ -382,12 +353,12 @@ class SimpleAgent:
                     except ValueError:
                         pass
             result = self.tool_map["movebackward"].run({"distance_m": distance})
-        elif "turn" in user_input or "rotate" in user_input:
-            parts = user_input.split()
+        elif "turn" in user_input_lower or "rotate" in user_input_lower:
+            parts = user_input_lower.split()
             angle = 90.0
-            if "left" in user_input:
+            if "left" in user_input_lower:
                 angle = -90.0
-            for i, part in enumerate(parts):
+            for part in parts:
                 if part.replace("-", "").replace(".", "").isdigit():
                     angle = float(part)
                     break

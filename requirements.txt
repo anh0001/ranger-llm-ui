@@ -1,19 +1,26 @@
 # Core dependencies
 gradio>=4.0.0
-langchain>=0.1.0
-langchain-openai>=0.0.5
-langchain-community>=0.0.10
-langchain-core>=0.1.0
+
+# LangChain dependencies - aligned with ros-technician-cli (ROSA) submodule
+# See ros-technician-cli/pyproject.toml for reference versions
+langchain~=0.3.23
+langchain-community~=0.3.21
+langchain-core~=0.3.52
+langchain-openai~=0.3.14
+langchain-ollama~=0.3.2
 
 # Data validation
 pydantic>=2.0.0
 
 # Configuration
-python-dotenv>=1.0.0
-PyYAML>=6.0
+python-dotenv>=1.0.1
+PyYAML>=6.0.1
 
-# Optional: Local LLM support via Ollama
-# ollama>=0.1.0
+# Required by ROSA (ros-technician-cli submodule)
+rich
+pillow>=10.4.0
+numpy>=1.26.4
+pyinputplus
 
 # Optional: Alternative LLM providers
 # langchain-anthropic>=0.1.0
@@ -25,3 +32,6 @@ pytest-asyncio>=0.21.0
 black>=23.0.0
 flake8>=6.0.0
 mypy>=1.0.0
+
+# Install the ros-technician-cli submodule as editable package
+# Run after cloning: pip install -e ros-technician-cli/
