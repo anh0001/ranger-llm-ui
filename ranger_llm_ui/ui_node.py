@@ -227,12 +227,7 @@ class RangerUINode:
         """Create the Gradio UI interface."""
 
         with gr.Blocks(
-            title="Ranger Robot Control",
-            theme=gr.themes.Soft(),
-            css="""
-            .stop-button { background-color: #ff4444 !important; }
-            .stop-button:hover { background-color: #cc0000 !important; }
-            """
+            title="Ranger Robot Control"
         ) as demo:
             gr.Markdown(
                 """
@@ -254,7 +249,6 @@ class RangerUINode:
                     chatbot = gr.Chatbot(
                         label="Chat",
                         height=500,
-                        show_copy_button=True,
                     )
 
                     with gr.Row():
