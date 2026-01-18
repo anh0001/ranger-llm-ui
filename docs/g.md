@@ -75,7 +75,7 @@ export PYTHONUSERBASE="/home/robofi/.local/ranger_llm_ui_py310"
 # OpenAI (default)
 export OPENAI_API_KEY=sk-...
 export LLM_PROVIDER=openai
-export LLM_MODEL=gpt-4  # Optional, defaults to gpt-4
+export LLM_MODEL=gpt-4o-mini  # Optional, defaults to gpt-4o-mini
 
 # Anthropic (Claude)
 export ANTHROPIC_API_KEY=sk-ant-...

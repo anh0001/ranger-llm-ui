@@ -189,6 +189,18 @@ class RangerUINode:
                 if tool_info:
                     output = "\n".join(tool_info) + "\n\n" + output
 
+            if os.getenv("SHOW_LLM_USAGE", "").lower() in {"1", "true", "yes", "on"}:
+                usage = result.get("usage") or {}
+                total_tokens = usage.get("total_tokens")
+                if total_tokens:
+                    cost = usage.get("total_cost_usd")
+                    cost_str = f", cost ${cost:.6f}" if isinstance(cost, (int, float)) else ""
+                    output = (
+                        f"{output}\n\n---\n"
+                        f"Tokens: prompt {usage.get('prompt_tokens', 0)}, "
+                        f"completion {usage.get('completion_tokens', 0)}, total {total_tokens}{cost_str}"
+                    )
+
             history[-1]["content"] = output
             yield history
 

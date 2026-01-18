@@ -75,6 +75,7 @@ Create a `.env` file for API keys:
 ```bash
 # For OpenAI (default)
 echo "OPENAI_API_KEY=your_api_key_here" > .env
+echo "LLM_MODEL=gpt-4o-mini" >> .env  # cheaper default for testing
 
 # Or for Ollama (local models):
 echo "LLM_PROVIDER=ollama" >> .env
@@ -84,6 +85,15 @@ echo "OLLAMA_BASE_URL=http://localhost:11434" >> .env
 echo "LLM_PROVIDER=anthropic" >> .env
 echo "ANTHROPIC_API_KEY=your_api_key_here" >> .env
 ```
+
+### Cost Control (OpenAI)
+
+This UI uses a tool-calling agent (ROSA), which can make multiple model calls per message and re-send chat history + tool schemas each time. If you see unexpectedly high usage, set:
+- `LLM_MODEL=gpt-4o-mini` (or another cheaper model)
+- `ROSA_MAX_ITERATIONS=15` (limits agent looping)
+- `ROSA_MAX_HISTORY_MESSAGES=20` (limits history growth)
+- `LLM_MAX_TOKENS=512` (caps long answers)
+- `SHOW_LLM_USAGE=true` (shows token counts in the chat)
 
 ### Running
 
@@ -138,6 +148,10 @@ The UI provides manual teleop buttons for direct control:
 | `OPENAI_API_KEY` | OpenAI API key | - |
 | `OLLAMA_BASE_URL` | Ollama server URL | http://localhost:11434 |
 | `GRADIO_PORT` | Web UI port | 7860 |
+| `LLM_MAX_TOKENS` | Max completion tokens (OpenAI) | unset |
+| `ROSA_MAX_ITERATIONS` | Max agent iterations per message | 15 |
+| `ROSA_MAX_HISTORY_MESSAGES` | Max messages kept in agent history | 20 |
+| `SHOW_LLM_USAGE` | Show token usage in chat | false |
 
 ### Configuration File
 

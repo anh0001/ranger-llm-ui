@@ -135,7 +135,7 @@ The system supports multiple LLM providers via [agent_interface.py](ranger_llm_u
 
 **OpenAI** (default):
 ```python
-provider="openai", model="gpt-4"
+provider="openai", model="gpt-4o-mini"
 ```
 
 **Ollama** (local models):

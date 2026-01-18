@@ -31,8 +31,10 @@ if os.path.exists(_submodule_src) and _submodule_src not in sys.path:
 from rosa import ROSA, RobotSystemPrompts
 
 # Import LangChain components for LLM creation
+from langchain.agents import Tool
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage
+from langchain_community.callbacks import get_openai_callback
 
 # Import Ranger-specific components
 from ranger_llm_ui.tools.all_tools import get_all_tools, initialize_all_tools
@@ -78,11 +80,16 @@ def create_llm(
         if not api_key:
             raise ValueError("OpenAI API key not found. Set OPENAI_API_KEY environment variable.")
 
+        max_tokens_env = os.getenv("LLM_MAX_TOKENS")
+        max_tokens = int(max_tokens_env) if max_tokens_env else None
+
         return ChatOpenAI(
-            model=model_name or "gpt-4",
+            # Default to a cheaper, widely available model. Override with LLM_MODEL.
+            model=model_name or "gpt-4o-mini",
             temperature=temperature,
             api_key=api_key,
             streaming=streaming,
+            **({"max_tokens": max_tokens} if max_tokens is not None else {}),
             **{k: v for k, v in kwargs.items() if k not in ["api_key"]},
         )
 
@@ -166,10 +173,13 @@ class RangerAgent:
             )
 
         # Get Ranger-specific tools as LangChain tools
-        ranger_tools = get_all_tools()
+        ranger_tools = self._wrap_tools(get_all_tools())
 
         # Get Ranger-specific prompts
         ranger_prompts = get_ranger_prompts()
+
+        max_iterations = int(os.getenv("ROSA_MAX_ITERATIONS", "15"))
+        self._max_history_messages = int(os.getenv("ROSA_MAX_HISTORY_MESSAGES", "20"))
 
         # Create ROSA instance with Ranger tools and prompts
         # ROSA handles all the agent logic, tool binding, and execution
@@ -181,7 +191,8 @@ class RangerAgent:
             verbose=verbose,
             streaming=streaming,
             accumulate_chat_history=True,
-            return_intermediate_steps=True,
+            max_iterations=max_iterations,
+            return_intermediate_steps=False,
         )
 
         # Command logger for tracking
@@ -189,6 +200,36 @@ class RangerAgent:
 
         logger.info(f"RangerAgent initialized with ROSA (ros-technician-cli submodule)")
         logger.info(f"Ranger tools: {[t.name for t in ranger_tools]}")
+
+    def _wrap_tools(self, tools: list[Any]) -> list[Tool]:
+        """
+        ROSA's tool registry expects LangChain Tools with a `.func`. Our local tools are
+        `BaseTool` subclasses, so wrap them into `langchain.agents.Tool` instances.
+        """
+
+        wrapped: list[Tool] = []
+
+        for base_tool in tools:
+            def _run_wrapped(*, _tool=base_tool, **kwargs):  # type: ignore[no-redef]
+                return _tool.run(kwargs)
+
+            wrapped.append(
+                Tool(
+                    name=base_tool.name,
+                    description=base_tool.description,
+                    func=_run_wrapped,
+                    args_schema=getattr(base_tool, "args_schema", None),
+                )
+            )
+
+        return wrapped
+
+    def _trim_chat_history(self):
+        if self._max_history_messages <= 0:
+            return
+        history = self._rosa.chat_history
+        if len(history) > self._max_history_messages:
+            del history[: len(history) - self._max_history_messages]
 
     def _initialize_ranger_tools(self, ros_node: Optional[Any]):
         """Initialize Ranger tools with the ROS node."""
@@ -213,18 +254,40 @@ class RangerAgent:
 
         # Invoke ROSA agent
         try:
-            output = self._rosa.invoke(user_input)
+            self._trim_chat_history()
+            with get_openai_callback() as cb:
+                result = self._rosa._ROSA__executor.invoke(  # type: ignore[attr-defined]
+                    {"input": user_input, "chat_history": self._rosa.chat_history}
+                )
+
+            output = result.get("output", "")
+            usage = {
+                "prompt_tokens": getattr(cb, "prompt_tokens", 0),
+                "completion_tokens": getattr(cb, "completion_tokens", 0),
+                "total_tokens": getattr(cb, "total_tokens", 0),
+                "total_cost_usd": getattr(cb, "total_cost", 0.0),
+                "successful_requests": getattr(cb, "successful_requests", 0),
+            }
+
+            if getattr(self._rosa, "_ROSA__accumulate_chat_history", True):  # type: ignore[attr-defined]
+                self._rosa.chat_history.extend(
+                    [HumanMessage(content=user_input), AIMessage(content=output)]
+                )
 
             # Log assistant response
             self._logger.log_conversation(role="assistant", content=output)
 
-            return {"output": output, "intermediate_steps": []}
+            return {
+                "output": output,
+                "intermediate_steps": result.get("intermediate_steps", []),
+                "usage": usage,
+            }
 
         except Exception as e:
             logger.error(f"Agent error: {e}")
             error_msg = f"I encountered an error: {str(e)}"
             self._logger.log_conversation(role="assistant", content=error_msg)
-            return {"output": error_msg, "intermediate_steps": []}
+            return {"output": error_msg, "intermediate_steps": [], "usage": {}}
 
     async def astream(self, user_input: str) -> AsyncIterator[dict]:
         """
@@ -240,6 +303,7 @@ class RangerAgent:
         self._logger.log_conversation(role="user", content=user_input)
 
         try:
+            self._trim_chat_history()
             # Use ROSA's async streaming
             async for event in self._rosa.astream(user_input):
                 event_type = event.get("type")
