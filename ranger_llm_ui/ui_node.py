@@ -461,12 +461,25 @@ class RangerUINode:
                     justify-content: center !important;
                 }
             """
+
+            # JavaScript to force light theme - using IIFE (Immediately Invoked Function Expression)
+            js_func = """
+            (function() {
+                const url = new URL(window.location);
+                if (url.searchParams.get('__theme') !== 'light') {
+                    url.searchParams.set('__theme', 'light');
+                    window.location.href = url.href;
+                }
+            })();
+            """
+
             demo.launch(
                 server_name="0.0.0.0",
                 server_port=self.server_port,
                 share=self.share,
                 show_error=True,
                 css=custom_css,
+                js=js_func,
             )
         except KeyboardInterrupt:
             logger.info("Shutting down...")
