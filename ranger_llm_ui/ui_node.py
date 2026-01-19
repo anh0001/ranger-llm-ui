@@ -250,35 +250,37 @@ class RangerUINode:
         assets_dir = Path(__file__).parent / "assets"
         robot_image_path = assets_dir / "robot_ranger_garden.webp"
 
-        with gr.Blocks(
-            title="Ranger Garden Assistant",
-        ) as demo:
+        with gr.Blocks(title="Ranger Garden Assistant") as demo:
+            # Centered title
             gr.Markdown(
                 """
-                # Ranger Garden Assistant
-                """
+                <h1 style="text-align: center;">Ranger Garden Assistant</h1>
+                """,
+                elem_id="title"
             )
 
-            # Title row with robot image on the left
-            with gr.Row():
-                with gr.Column(scale=1):
-                    # Display robot image on the left
-                    if robot_image_path.exists():
-                        gr.Image(
-                            value=str(robot_image_path),
-                            label=None,
-                            show_label=False,
-                            container=False,
-                            height=200,
-                            buttons=[],  # Hide all buttons (download, share, fullscreen)
-                        )
-                with gr.Column(scale=4):
-                    # Empty space on the right
-                    pass
+            # Create three tabs: Home, Status, Settings (centered)
+            with gr.Tabs(elem_classes=["tabs"]):
+                # Home Tab - Main chat interface with robot image
+                with gr.Tab("Home"):
+                    # Robot image at the top (larger)
+                    with gr.Row():
+                        with gr.Column(scale=1):
+                            pass
+                        with gr.Column(scale=2):
+                            if robot_image_path.exists():
+                                gr.Image(
+                                    value=str(robot_image_path),
+                                    label=None,
+                                    show_label=False,
+                                    container=False,
+                                    height=280,
+                                    buttons=[],  # Hide all buttons (download, share, fullscreen)
+                                )
+                        with gr.Column(scale=1):
+                            pass
 
-            with gr.Row():
-                # Main chat interface (left column)
-                with gr.Column(scale=3):
+                    # Chat interface
                     chatbot = gr.Chatbot(
                         label="Chat",
                         height=500,
@@ -300,48 +302,96 @@ class RangerUINode:
                             elem_classes=["stop-button"],
                         )
 
-                # Status and controls panel (right column)
-                with gr.Column(scale=1):
-                    gr.Markdown("### Status")
-                    battery_display = gr.Textbox(
-                        label="Battery",
-                        value=self.get_battery_status(),
-                        interactive=False,
-                    )
-                    refresh_btn = gr.Button("Refresh Status", size="sm")
+                # Status Tab - Status display and controls
+                with gr.Tab("Status"):
+                    with gr.Row():
+                        with gr.Column(scale=1):
+                            gr.Markdown("### Battery Status")
+                            battery_display = gr.Textbox(
+                                label="Battery",
+                                value=self.get_battery_status(),
+                                interactive=False,
+                            )
+                            refresh_btn = gr.Button("Refresh Status", size="sm")
 
-                    gr.Markdown("### Camera")
-                    camera_image = gr.Image(
-                        label="Camera",
-                        value=self.get_camera_image(),
-                        interactive=False,
-                        height=240,
-                    )
-                    camera_refresh_btn = gr.Button("Refresh Camera", size="sm")
+                        with gr.Column(scale=1):
+                            gr.Markdown("### Camera")
+                            camera_image = gr.Image(
+                                label="Camera",
+                                value=self.get_camera_image(),
+                                interactive=False,
+                                height=240,
+                            )
+                            camera_refresh_btn = gr.Button("Refresh Camera", size="sm")
 
                     gr.Markdown("### Manual Controls")
                     with gr.Row():
-                        gr.Button("").visible = False  # Spacer
-                        fwd_btn = gr.Button("↑ Forward")
-                        gr.Button("").visible = False  # Spacer
+                        with gr.Column(scale=1):
+                            # Empty space on the left
+                            pass
+                        with gr.Column(scale=1):
+                            with gr.Row():
+                                gr.Button("").visible = False  # Spacer
+                                fwd_btn = gr.Button("↑ Forward", scale=1)
+                                gr.Button("").visible = False  # Spacer
+
+                            with gr.Row():
+                                left_btn = gr.Button("← Left", scale=1)
+                                stop_manual_btn = gr.Button("Stop", scale=1)
+                                right_btn = gr.Button("Right →", scale=1)
+
+                            with gr.Row():
+                                gr.Button("").visible = False  # Spacer
+                                back_btn = gr.Button("↓ Back", scale=1)
+                                gr.Button("").visible = False  # Spacer
+
+                            manual_output = gr.Textbox(
+                                label="Manual Control Output",
+                                interactive=False,
+                                lines=2,
+                            )
+                        with gr.Column(scale=1):
+                            # Empty space on the right
+                            pass
+
+                # Settings Tab - Gradio and system settings
+                with gr.Tab("Settings"):
+                    gr.Markdown("### System Information")
 
                     with gr.Row():
-                        left_btn = gr.Button("← Left")
-                        stop_manual_btn = gr.Button("Stop")
-                        right_btn = gr.Button("Right →")
+                        with gr.Column():
+                            gr.Markdown(f"""
+                            - **LLM Provider:** {self.llm_provider}
+                            - **Model:** {self.model_name or 'Default'}
+                            - **Simple Mode:** {'Yes' if self.simple_mode else 'No'}
+                            - **ROS 2 Available:** {'Yes' if ROS_AVAILABLE else 'No'}
+                            - **Server Port:** {self.server_port}
+                            """)
+
+                    gr.Markdown("### Gradio Settings")
 
                     with gr.Row():
-                        gr.Button("").visible = False  # Spacer
-                        back_btn = gr.Button("↓ Back")
-                        gr.Button("").visible = False  # Spacer
+                        with gr.Column():
+                            gr.Markdown("""
+                            **Current Configuration:**
+                            - Server: 0.0.0.0
+                            - Show Error: Enabled
 
-                    manual_output = gr.Textbox(
-                        label="Manual Control Output",
-                        interactive=False,
-                        lines=2,
-                    )
+                            **Environment Variables:**
+                            You can configure the following via environment variables:
+                            - `LLM_PROVIDER`: openai, ollama, or anthropic
+                            - `LLM_MODEL`: Model name
+                            - `GRADIO_PORT`: Server port (default: 7860)
+                            - `SHOW_LLM_USAGE`: Show token usage (true/false)
 
-            # Event handlers
+                            **Camera Settings:**
+                            - `CAMERA_IMAGE_MAX_WIDTH`: Image width (default: 320)
+                            - `CAMERA_IMAGE_MAX_HEIGHT`: Image height (default: 240)
+                            - `CAMERA_IMAGE_QUALITY`: JPEG quality (default: 75)
+                            - `CAMERA_IMAGE_FORMAT`: jpeg or png (default: jpeg)
+                            """)
+
+            # Event handlers for Home tab
             submit_btn.click(
                 fn=self.chat_response,
                 inputs=[msg, chatbot],
@@ -367,9 +417,10 @@ class RangerUINode:
 
             stop_btn.click(
                 fn=self.emergency_stop,
-                outputs=[manual_output],
+                outputs=[],
             )
 
+            # Event handlers for Status tab
             refresh_btn.click(
                 fn=self.get_battery_status,
                 outputs=[battery_display],
@@ -403,11 +454,19 @@ class RangerUINode:
         demo = self.create_ui()
 
         try:
+            # Custom CSS to center tabs without breaking functionality
+            custom_css = """
+                /* Center the tab navigation buttons only */
+                div[role="tablist"] {
+                    justify-content: center !important;
+                }
+            """
             demo.launch(
                 server_name="0.0.0.0",
                 server_port=self.server_port,
                 share=self.share,
                 show_error=True,
+                css=custom_css,
             )
         except KeyboardInterrupt:
             logger.info("Shutting down...")
