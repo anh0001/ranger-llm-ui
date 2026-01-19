@@ -507,6 +507,18 @@ class RangerUINode:
             right_btn.click(fn=self.teleop_right, outputs=[manual_output])
             stop_manual_btn.click(fn=self.emergency_stop, outputs=[manual_output])
 
+            # Custom footer at the bottom
+            gr.HTML(
+                """
+                <div style="text-align: center; margin-top: 40px; padding: 20px; border-top: 1px solid #e0e0e0;">
+                    <a href="https://github.com/anh0001/ranger-garden-assistant" target="_blank" style="color: #0066cc; text-decoration: none; font-size: 14px;">
+                        GitHub: Ranger Garden Assistant
+                    </a>
+                </div>
+                """,
+                elem_id="custom-footer"
+            )
+
         return demo
 
     def run(self):
@@ -523,11 +535,16 @@ class RangerUINode:
         demo = self.create_ui()
 
         try:
-            # Custom CSS to center tabs without breaking functionality
+            # Custom CSS to center tabs and hide Gradio footer
             custom_css = """
                 /* Center the tab navigation buttons only */
                 div[role="tablist"] {
                     justify-content: center !important;
+                }
+
+                /* Hide Gradio footer */
+                footer {
+                    display: none !important;
                 }
             """
 
