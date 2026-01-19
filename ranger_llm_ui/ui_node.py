@@ -18,8 +18,10 @@ import sys
 import asyncio
 import threading
 import logging
+import signal
 from typing import Optional, Generator, Any
 from pathlib import Path
+from functools import wraps
 
 import gradio as gr
 from dotenv import load_dotenv
@@ -92,6 +94,9 @@ class RangerUINode:
         # Command logger
         self.logger = get_command_logger()
 
+        # Cancellation flag for stopping long-running requests
+        self._cancel_requested = threading.Event()
+
     def initialize_ros(self):
         """Initialize ROS 2 node if available."""
         if not ROS_AVAILABLE:
@@ -156,6 +161,12 @@ class RangerUINode:
         interface = get_camera_interface()
         return interface.get_latest_image()
 
+    def cancel_chat(self):
+        """Cancel the ongoing chat request."""
+        self._cancel_requested.set()
+        logger.info("Chat cancellation requested")
+        return gr.update(visible=True), gr.update(visible=False)
+
     def chat_response(
         self, message: str, history: list[dict]
     ) -> Generator[list[dict], None, None]:
@@ -179,10 +190,39 @@ class RangerUINode:
         history.append({"role": "user", "content": message})
         history.append({"role": "assistant", "content": ""})
 
+        # Clear cancel flag at start of new request
+        self._cancel_requested.clear()
+
         try:
-            # For synchronous response (non-streaming)
-            result = self.agent.invoke(message)
-            output = result.get("output", "I couldn't process that request.")
+            # For synchronous response (non-streaming) with timeout
+            # Set timeout to 60 seconds to prevent hanging
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(self.agent.invoke, message)
+
+                # Poll for cancellation or completion (max 60 seconds)
+                elapsed_time = 0
+                max_timeout = 60
+                while elapsed_time < max_timeout:
+                    try:
+                        result = future.result(timeout=1)  # Check every 1 second
+                        output = result.get("output", "I couldn't process that request.")
+                        break
+                    except concurrent.futures.TimeoutError:
+                        elapsed_time += 1
+                        # Check if user requested cancellation
+                        if self._cancel_requested.is_set():
+                            logger.info("Chat request cancelled by user")
+                            history[-1]["content"] = "❌ Request cancelled by user."
+                            yield history
+                            return
+                        # Continue waiting if not cancelled and not timed out
+                        continue
+                else:
+                    # Loop exited due to timeout
+                    history[-1]["content"] = "⚠️ Request timed out after 60 seconds. The LLM is taking too long to respond. Please try a simpler command or check your LLM connection."
+                    yield history
+                    return
 
             # Check for intermediate steps to show tool usage
             intermediate_steps = result.get("intermediate_steps", [])
@@ -293,6 +333,7 @@ class RangerUINode:
                             scale=4,
                         )
                         submit_btn = gr.Button("Send", variant="primary", scale=1)
+                        stop_chat_btn = gr.Button("Stop", variant="stop", scale=1, visible=False)
 
                     with gr.Row():
                         clear_btn = gr.Button("Clear Chat")
@@ -392,22 +433,48 @@ class RangerUINode:
                             """)
 
             # Event handlers for Home tab
-            submit_btn.click(
+            # When Send is clicked: hide Send, show Stop, run chat
+            submit_event = submit_btn.click(
+                fn=lambda: (gr.update(visible=False), gr.update(visible=True)),
+                inputs=None,
+                outputs=[submit_btn, stop_chat_btn],
+            ).then(
                 fn=self.chat_response,
                 inputs=[msg, chatbot],
                 outputs=[chatbot],
             ).then(
                 fn=lambda: "",
                 outputs=[msg],
+            ).then(
+                fn=lambda: (gr.update(visible=True), gr.update(visible=False)),
+                inputs=None,
+                outputs=[submit_btn, stop_chat_btn],
             )
 
-            msg.submit(
+            # When Enter is pressed: hide Send, show Stop, run chat
+            msg_event = msg.submit(
+                fn=lambda: (gr.update(visible=False), gr.update(visible=True)),
+                inputs=None,
+                outputs=[submit_btn, stop_chat_btn],
+            ).then(
                 fn=self.chat_response,
                 inputs=[msg, chatbot],
                 outputs=[chatbot],
             ).then(
                 fn=lambda: "",
                 outputs=[msg],
+            ).then(
+                fn=lambda: (gr.update(visible=True), gr.update(visible=False)),
+                inputs=None,
+                outputs=[submit_btn, stop_chat_btn],
+            )
+
+            # When Stop is clicked: cancel chat, restore Send button
+            stop_chat_btn.click(
+                fn=self.cancel_chat,
+                inputs=None,
+                outputs=[submit_btn, stop_chat_btn],
+                cancels=[submit_event, msg_event],
             )
 
             clear_btn.click(
@@ -415,9 +482,11 @@ class RangerUINode:
                 outputs=[chatbot],
             )
 
+            # Stop button cancels the ongoing chat request AND executes emergency stop
             stop_btn.click(
                 fn=self.emergency_stop,
                 outputs=[],
+                cancels=[submit_event, msg_event],  # Cancel ongoing chat
             )
 
             # Event handlers for Status tab
@@ -472,6 +541,13 @@ class RangerUINode:
                 }
             })();
             """
+
+            # Configure queue with proper concurrency settings
+            demo.queue(
+                default_concurrency_limit=1,  # Process 1 request at a time (LLM is resource-heavy)
+                max_size=5,  # Limit queue to 5 requests to prevent long waits
+                api_open=True,  # Enable API access
+            )
 
             demo.launch(
                 server_name="0.0.0.0",
