@@ -258,16 +258,23 @@ class RangerUINode:
                 # Ranger Garden Assistant
                 """
             )
-            
-            # Display robot image
-            if robot_image_path.exists():
-                gr.Image(
-                    value=str(robot_image_path),
-                    label=None,
-                    show_label=False,
-                    container=False,
-                    height=200,
-                )
+
+            # Title row with robot image on the left
+            with gr.Row():
+                with gr.Column(scale=1):
+                    # Display robot image on the left
+                    if robot_image_path.exists():
+                        gr.Image(
+                            value=str(robot_image_path),
+                            label=None,
+                            show_label=False,
+                            container=False,
+                            height=200,
+                            buttons=[],  # Hide all buttons (download, share, fullscreen)
+                        )
+                with gr.Column(scale=4):
+                    # Empty space on the right
+                    pass
 
             with gr.Row():
                 # Main chat interface (left column)
