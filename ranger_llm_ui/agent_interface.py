@@ -185,6 +185,7 @@ class RangerAgent:
 
         max_iterations = int(os.getenv("ROSA_MAX_ITERATIONS", "15"))
         self._max_history_messages = int(os.getenv("ROSA_MAX_HISTORY_MESSAGES", "20"))
+        agent_verbose = os.getenv("ROSA_VERBOSE", "false").lower() in ("true", "1", "yes")
 
         # Create ROSA instance with Ranger tools and prompts
         # ROSA handles all the agent logic, tool binding, and execution
@@ -193,7 +194,7 @@ class RangerAgent:
             llm=llm,
             tools=ranger_tools,  # Add Ranger-specific tools
             prompts=ranger_prompts,  # Ranger-specific prompts
-            verbose=verbose,
+            verbose=verbose or agent_verbose,
             streaming=streaming,
             accumulate_chat_history=True,
             max_iterations=max_iterations,
