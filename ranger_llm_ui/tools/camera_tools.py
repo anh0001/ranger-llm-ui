@@ -159,13 +159,103 @@ class ROSCameraInterface:
         if msg is None:
             return None
 
-        try:
-            image = image_to_numpy(msg)
-        except Exception as e:
-            logger.error(f"Failed to convert ROS image: {e}")
+        image = self._convert_ros_image(msg)
+        if image is None:
             return None
 
         return self._normalize_image(image, getattr(msg, "encoding", ""))
+
+    def _convert_ros_image(self, msg: Any) -> Optional[np.ndarray]:
+        """Convert a ROS image message into a numpy array."""
+        encoding = (getattr(msg, "encoding", "") or "").lower()
+
+        try:
+            return image_to_numpy(msg)
+        except Exception as e:
+            if encoding in {
+                "yuv422",
+                "yuyv",
+                "yuyv422",
+                "yuv422_yuy2",
+                "yuy2",
+                "uyvy",
+                "uyvy422",
+            }:
+                image = self._convert_yuv422_to_rgb(msg, encoding)
+                if image is not None:
+                    logger.info(
+                        f"Converted ROS image with fallback decoder for encoding '{encoding}'"
+                    )
+                    return image
+            logger.error(f"Failed to convert ROS image: {e}")
+            return None
+
+    def _convert_yuv422_to_rgb(self, msg: Any, encoding: str) -> Optional[np.ndarray]:
+        """Decode YUV422-family encodings into RGB."""
+        width = int(getattr(msg, "width", 0) or 0)
+        height = int(getattr(msg, "height", 0) or 0)
+        if width <= 0 or height <= 0:
+            logger.error(
+                f"Invalid YUV422 image dimensions: width={width}, height={height}"
+            )
+            return None
+
+        if width % 2 != 0:
+            logger.error(f"YUV422 requires an even width, got {width}")
+            return None
+
+        bytes_per_row = width * 2
+        step = int(getattr(msg, "step", 0) or bytes_per_row)
+        if step < bytes_per_row:
+            logger.error(
+                f"Invalid YUV422 row step: step={step}, expected at least {bytes_per_row}"
+            )
+            return None
+
+        data = np.frombuffer(msg.data, dtype=np.uint8)
+        expected_size = step * height
+        if data.size < expected_size:
+            logger.error(
+                f"YUV422 data too small: got {data.size} bytes, expected {expected_size}"
+            )
+            return None
+
+        rows = data[:expected_size].reshape(height, step)
+        pairs = rows[:, :bytes_per_row].reshape(height, width // 2, 4)
+
+        if encoding in {"yuyv", "yuyv422", "yuv422_yuy2", "yuy2"}:
+            layout = "yuyv"
+        elif encoding in {"uyvy", "uyvy422"}:
+            layout = "uyvy"
+        else:
+            # "yuv422" is ambiguous in practice; infer layout from luma variance.
+            even_var = float(np.var(pairs[..., [0, 2]].astype(np.float32)))
+            odd_var = float(np.var(pairs[..., [1, 3]].astype(np.float32)))
+            layout = "uyvy" if odd_var > even_var else "yuyv"
+
+        if layout == "yuyv":
+            y0 = pairs[..., 0].astype(np.float32)
+            u = pairs[..., 1].astype(np.float32)
+            y1 = pairs[..., 2].astype(np.float32)
+            v = pairs[..., 3].astype(np.float32)
+        else:
+            u = pairs[..., 0].astype(np.float32)
+            y0 = pairs[..., 1].astype(np.float32)
+            v = pairs[..., 2].astype(np.float32)
+            y1 = pairs[..., 3].astype(np.float32)
+
+        y = np.empty((height, width), dtype=np.float32)
+        y[:, 0::2] = y0
+        y[:, 1::2] = y1
+        u = np.repeat(u, 2, axis=1) - 128.0
+        v = np.repeat(v, 2, axis=1) - 128.0
+
+        r = y + (1.402 * v)
+        g = y - (0.344136 * u) - (0.714136 * v)
+        b = y + (1.772 * u)
+
+        rgb = np.stack([r, g, b], axis=-1)
+        return np.clip(rgb, 0.0, 255.0).astype(np.uint8)
 
     def _get_simulated_image(self) -> np.ndarray:
         """Generate or return a cached simulated camera image."""

@@ -8,6 +8,7 @@ in simulation mode (without requiring ROS 2 or actual hardware).
 import pytest
 import time
 from unittest.mock import Mock, patch
+import numpy as np
 
 from ranger_llm_ui.tools.movement_tools import (
     MoveForwardTool,
@@ -198,7 +199,7 @@ class TestCameraTools:
     def test_get_camera_image(self):
         """Test camera image retrieval (simulation)."""
         tool = GetCameraImageTool()
-        result = tool.run({})
+        result = tool.run({"format": "png"})
 
         assert "camera image" in result.lower()
         assert "data:image/png;base64" in result
@@ -209,6 +210,42 @@ class TestCameraTools:
 
         assert len(tools) == 1
         assert tools[0].name == "GetCameraImage"
+
+    def test_yuyv422_conversion_to_rgb(self):
+        """Test direct YUYV422 decoding to RGB."""
+        interface = initialize_camera_interface(None)
+        msg = Mock()
+        msg.width = 2
+        msg.height = 2
+        msg.step = 4
+        # YUYV bytes: [Y0, U, Y1, V] with neutral chroma (U=V=128).
+        msg.data = bytes([50, 128, 100, 128, 150, 128, 200, 128])
+
+        image = interface._convert_yuv422_to_rgb(msg, "yuyv")
+
+        assert image is not None
+        assert image.shape == (2, 2, 3)
+        assert image.dtype == np.uint8
+        assert np.all(np.abs(image[:, :, 0] - np.array([[50, 100], [150, 200]])) <= 1)
+        assert np.all(np.abs(image[:, :, 1] - np.array([[50, 100], [150, 200]])) <= 1)
+        assert np.all(np.abs(image[:, :, 2] - np.array([[50, 100], [150, 200]])) <= 1)
+
+    def test_yuv422_fallback_when_primary_converter_fails(self):
+        """Test conversion fallback for yuv422 encoding."""
+        interface = initialize_camera_interface(None)
+        msg = Mock()
+        msg.width = 2
+        msg.height = 2
+        msg.step = 4
+        msg.encoding = "yuv422"
+        # UYVY bytes: [U, Y0, V, Y1] with neutral chroma (U=V=128).
+        msg.data = bytes([128, 60, 128, 120, 128, 180, 128, 240])
+
+        image = interface._convert_ros_image(msg)
+
+        assert image is not None
+        assert image.shape == (2, 2, 3)
+        assert np.all(np.abs(image[:, :, 0] - np.array([[60, 120], [180, 240]])) <= 1)
 
 
 class TestAllTools:

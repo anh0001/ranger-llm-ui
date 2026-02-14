@@ -150,6 +150,7 @@ class RangerAgent:
         ros_node: Optional[Any] = None,
         verbose: bool = False,
         streaming: bool = True,
+        debug_mode: bool = False,
     ):
         """
         Initialize the Ranger agent.
@@ -161,6 +162,8 @@ class RangerAgent:
             ros_node: ROS 2 node for tool initialization
             verbose: Enable verbose logging
             streaming: Enable streaming responses (default: True)
+            debug_mode: When True, skip Ranger-specific prompts and use only
+                        ROSA base system prompts (useful for debugging)
         """
         # Initialize Ranger-specific tools with ROS node
         self._initialize_ranger_tools(ros_node)
@@ -176,8 +179,9 @@ class RangerAgent:
         # Get Ranger-specific tools as LangChain tools
         ranger_tools = self._wrap_tools(get_all_tools())
 
-        # Get Ranger-specific prompts
-        ranger_prompts = get_ranger_prompts()
+        # Get Ranger-specific prompts (None in debug mode → ROSA base prompts only)
+        ranger_prompts = None if debug_mode else get_ranger_prompts()
+        self.debug_mode = debug_mode
 
         max_iterations = int(os.getenv("ROSA_MAX_ITERATIONS", "15"))
         self._max_history_messages = int(os.getenv("ROSA_MAX_HISTORY_MESSAGES", "20"))
@@ -201,6 +205,8 @@ class RangerAgent:
 
         logger.info(f"RangerAgent initialized with ROSA (ros-technician-cli submodule)")
         logger.info(f"Ranger tools: {[t.name for t in ranger_tools]}")
+        if debug_mode:
+            logger.info("DEBUG MODE: Ranger-specific prompts disabled. Using ROSA base prompts only.")
 
     def _wrap_tools(self, tools: list[Any]) -> list[Any]:
         """
@@ -469,6 +475,7 @@ def create_agent(
     model_name: Optional[str] = None,
     ros_node: Optional[Any] = None,
     simple_mode: bool = False,
+    debug_mode: bool = False,
     **kwargs,
 ) -> Union[RangerAgent, SimpleAgent]:
     """
@@ -479,6 +486,7 @@ def create_agent(
         model_name: Model name (optional)
         ros_node: ROS 2 node for tool initialization
         simple_mode: Use SimpleAgent for testing without LLM
+        debug_mode: Skip Ranger-specific prompts, use only ROSA base prompts
         **kwargs: Additional arguments for LLM creation
 
     Returns:
@@ -494,5 +502,6 @@ def create_agent(
         provider=provider,
         model_name=model_name,
         ros_node=ros_node,
+        debug_mode=debug_mode,
         **kwargs,
     )

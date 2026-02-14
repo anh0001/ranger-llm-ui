@@ -65,6 +65,7 @@ class RangerUINode:
         server_port: int = 7860,
         share: bool = False,
         simple_mode: bool = False,
+        debug_mode: bool = False,
     ):
         """
         Initialize the UI node.
@@ -76,6 +77,7 @@ class RangerUINode:
             server_port: Gradio server port
             share: Create a public Gradio link
             simple_mode: Use simple agent without LLM
+            debug_mode: Use only ROSA base prompts, skip Ranger-specific prompts
         """
         self.node_name = node_name
         self.llm_provider = llm_provider
@@ -83,6 +85,7 @@ class RangerUINode:
         self.server_port = server_port
         self.share = share
         self.simple_mode = simple_mode
+        self.debug_mode = debug_mode
 
         self._node: Optional[Any] = None
         self._executor: Optional[Any] = None
@@ -133,13 +136,23 @@ class RangerUINode:
                 model_name=self.model_name,
                 ros_node=self._node,
                 simple_mode=self.simple_mode,
+                debug_mode=self.debug_mode,
             )
-            logger.info(f"Agent initialized with provider: {self.llm_provider}")
+            mode_label = "DEBUG (ROSA only)" if self.debug_mode else "Running (Ranger+ROSA)"
+            logger.info(f"Agent initialized with provider: {self.llm_provider}, mode: {mode_label}")
         except Exception as e:
             logger.error(f"Failed to initialize agent: {e}")
             # Fall back to simple mode
             logger.info("Falling back to simple mode")
             self.agent = create_agent(ros_node=self._node, simple_mode=True)
+
+    def set_debug_mode(self, enabled: bool) -> str:
+        """Switch between Running and Debug mode and reinitialize the agent."""
+        self.debug_mode = enabled
+        self.initialize_agent()
+        if enabled:
+            return "Switched to **Debug mode** (ROSA base prompts only, no Ranger persona)"
+        return "Switched to **Running mode** (Ranger + ROSA prompts active)"
 
     def emergency_stop(self) -> str:
         """Execute emergency stop."""
@@ -409,6 +422,21 @@ class RangerUINode:
                             - **Server Port:** {self.server_port}
                             """)
 
+                    gr.Markdown("### Agent Mode")
+                    with gr.Row():
+                        with gr.Column():
+                            gr.Markdown(
+                                "**Running mode** uses the full Ranger persona + ROSA base prompts.  \n"
+                                "**Debug mode** sends only the ROSA base system prompts — no Ranger-specific instructions."
+                            )
+                            debug_toggle = gr.Radio(
+                                choices=["Running", "Debug"],
+                                value="Debug" if self.debug_mode else "Running",
+                                label="Agent Mode",
+                                interactive=True,
+                            )
+                            mode_status = gr.Markdown("")
+
                     gr.Markdown("### Gradio Settings")
 
                     with gr.Row():
@@ -431,6 +459,13 @@ class RangerUINode:
                             - `CAMERA_IMAGE_QUALITY`: JPEG quality (default: 75)
                             - `CAMERA_IMAGE_FORMAT`: jpeg or png (default: jpeg)
                             """)
+
+            # Event handler for debug/running mode toggle
+            debug_toggle.change(
+                fn=lambda choice: self.set_debug_mode(choice == "Debug"),
+                inputs=[debug_toggle],
+                outputs=[mode_status],
+            )
 
             # Event handlers for Home tab
             # When Send is clicked: hide Send, show Stop, run chat
@@ -629,6 +664,12 @@ def main():
         action="store_true",
         help="Use simple agent without LLM (for testing)",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        default=os.getenv("RANGER_DEBUG_MODE", "").lower() in {"1", "true", "yes"},
+        help="Debug mode: use only ROSA base prompts, skip Ranger-specific prompts (default: false)",
+    )
 
     args = parser.parse_args()
 
@@ -641,6 +682,7 @@ def main():
         server_port=args.port,
         share=args.share,
         simple_mode=args.simple,
+        debug_mode=args.debug,
     )
     node.run()
 
