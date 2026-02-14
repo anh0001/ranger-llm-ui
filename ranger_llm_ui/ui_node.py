@@ -164,7 +164,7 @@ class RangerUINode:
     def get_battery_status(self) -> str:
         """Get current battery status for display."""
         interface = get_status_interface()
-        level, status = interface.get_battery_level()
+        level, status, _voltage = interface.get_battery_level()
         if level < 0:
             return "Battery: Unknown"
         return f"Battery: {level:.0f}% ({status})"
@@ -367,6 +367,7 @@ class RangerUINode:
                                 interactive=False,
                             )
                             refresh_btn = gr.Button("Refresh Status", size="sm")
+                            battery_timer = gr.Timer(value=5)
 
                         with gr.Column(scale=1):
                             gr.Markdown("### Camera")
@@ -526,6 +527,10 @@ class RangerUINode:
 
             # Event handlers for Status tab
             refresh_btn.click(
+                fn=self.get_battery_status,
+                outputs=[battery_display],
+            )
+            battery_timer.tick(
                 fn=self.get_battery_status,
                 outputs=[battery_display],
             )

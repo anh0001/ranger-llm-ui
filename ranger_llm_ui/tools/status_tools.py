@@ -52,7 +52,8 @@ class ROSStatusInterface:
 
     def initialize(self, node: Optional[Any] = None):
         """Initialize the status interface with a node."""
-        if self._initialized:
+        # Allow re-initialization if a real node is now available but we previously ran in simulation
+        if self._initialized and not (self._simulation_mode and node is not None):
             return
 
         self._node = node
@@ -97,35 +98,33 @@ class ROSStatusInterface:
     def simulation_mode(self) -> bool:
         return self._simulation_mode
 
-    def get_battery_level(self) -> tuple[float, str]:
+    def get_battery_level(self) -> tuple[float, str, float]:
         """
         Get current battery level.
 
         Returns:
-            Tuple of (battery_percentage, status_string)
+            Tuple of (battery_percentage, status_string, voltage_v)
         """
         if self._simulation_mode:
             level = self._sim_battery_level
             status = "charging" if level < 100 else "full"
-            return level, status
+            return level, status, 0.0
 
         if self._battery_state is None:
-            return -1.0, "unknown"
+            return -1.0, "unknown", 0.0
 
-        # BatteryState percentage is 0.0-1.0
-        level = self._battery_state.percentage * 100
+        # BatteryState percentage is already 0-100 (not 0.0-1.0) for this robot
+        level = self._battery_state.percentage
 
-        # Determine status
-        if self._battery_state.power_supply_status == 1:
-            status = "charging"
-        elif self._battery_state.power_supply_status == 2:
-            status = "discharging"
-        elif self._battery_state.power_supply_status == 4:
-            status = "full"
-        else:
-            status = "unknown"
+        # Voltage: published in mV, convert to V
+        voltage_v = self._battery_state.voltage / 1000.0 if self._battery_state.voltage > 100 else self._battery_state.voltage
 
-        return level, status
+        # Determine status from power_supply_status
+        # sensor_msgs/BatteryState: 0=UNKNOWN, 1=CHARGING, 2=DISCHARGING, 3=NOT_CHARGING, 4=FULL
+        status_map = {0: "unknown", 1: "charging", 2: "discharging", 3: "not charging", 4: "full"}
+        status = status_map.get(self._battery_state.power_supply_status, "unknown")
+
+        return level, status, voltage_v
 
     def get_odometry(self) -> Optional[dict]:
         """
@@ -265,24 +264,26 @@ class BatteryStatusTool(BaseTool):
         start_time = time.time()
 
         interface = get_status_interface()
-        level, status = interface.get_battery_level()
+        level, status, voltage_v = interface.get_battery_level()
 
         if level < 0:
             result = "Battery status unavailable"
             success = False
         else:
             result = f"Battery level: {level:.1f}% ({status})"
+            if voltage_v > 0:
+                result += f", Voltage: {voltage_v:.2f} V"
             success = True
 
             # Update safety guard with battery level
             safety_guard = get_safety_guard()
             safety_guard.update_battery_level(level)
 
-            # Add warnings if applicable
-            if level < 20:
-                result += " - WARNING: Low battery!"
-            elif level < 10:
+            # Add warnings if applicable (check critical first)
+            if level < 10:
                 result += " - CRITICAL: Battery very low!"
+            elif level < 20:
+                result += " - WARNING: Low battery!"
 
         execution_time = (time.time() - start_time) * 1000
         log_tool_call(
@@ -339,7 +340,7 @@ class SystemHealthTool(BaseTool):
             lines.append(f"    {topic}: {status_str}")
 
         # Get battery status
-        level, _ = interface.get_battery_level()
+        level, _, _voltage = interface.get_battery_level()
         if level >= 0:
             lines.append(f"  Battery: {level:.1f}%")
 
