@@ -43,6 +43,7 @@ from ranger_llm_ui.tools.all_tools import (
 from ranger_llm_ui.safety.guard import (
     SafetyGuard,
     SafetyConfig,
+    get_safety_guard,
     validate_velocity,
     validate_distance,
 )
@@ -63,6 +64,10 @@ class TestMovementTools:
         """Set up test fixtures."""
         # Initialize in simulation mode (no ROS node)
         initialize_ros_interface(None)
+        # Reset shared safety state between tests
+        guard = get_safety_guard()
+        guard.deactivate_emergency_stop()
+        guard.state.battery_level = None
 
     def test_move_forward_basic(self):
         """Test basic forward movement."""
@@ -80,6 +85,17 @@ class TestMovementTools:
         # Should work for reasonable distance
         result = tool.run({"distance_m": 0.5})
         assert "forward" in result.lower()
+
+    def test_move_forward_blocks_when_emergency_stop_active(self):
+        """Move commands should be blocked when emergency stop is active."""
+        guard = get_safety_guard()
+        guard.activate_emergency_stop("test")
+
+        tool = MoveForwardTool()
+        result = tool.run({"distance_m": 1.0})
+
+        assert "safety blocked" in result.lower()
+        assert "emergency stop" in result.lower()
 
     def test_move_backward_basic(self):
         """Test basic backward movement."""
@@ -103,6 +119,17 @@ class TestMovementTools:
         result = tool.run({"angle_deg": -90})
 
         assert "left" in result.lower() or "90" in result
+
+    def test_turn_angle_blocks_on_critical_battery(self):
+        """Turn commands should be blocked when battery is critically low."""
+        guard = get_safety_guard()
+        guard.update_battery_level(5.0)
+
+        tool = TurnAngleTool()
+        result = tool.run({"angle_deg": 45})
+
+        assert "safety blocked" in result.lower()
+        assert "battery" in result.lower()
 
     def test_stop_robot(self):
         """Test emergency stop."""
@@ -155,6 +182,23 @@ class TestStatusTools:
         assert "health" in result.lower() or "status" in result.lower()
         assert "simulation" in result.lower()
 
+    def test_system_health_reports_battery_unavailable(self):
+        """System health should explicitly report missing battery data."""
+        interface = get_status_interface()
+        original_mode = interface._simulation_mode
+        original_battery = interface._battery_state
+
+        try:
+            interface._simulation_mode = False
+            interface._battery_state = None
+
+            tool = SystemHealthTool()
+            result = tool.run({})
+            assert "battery status unavailable" in result.lower()
+        finally:
+            interface._simulation_mode = original_mode
+            interface._battery_state = original_battery
+
     def test_get_odometry(self):
         """Test odometry query."""
         tool = GetOdometryTool()
@@ -186,6 +230,28 @@ class TestStatusTools:
         tool_names = [t.name for t in tools]
         assert "BatteryStatus" in tool_names
         assert "SystemHealth" in tool_names
+
+    def test_battery_level_normalizes_fractional_percentage(self):
+        """Battery percentages in 0..1 range should be normalized to 0..100."""
+        interface = get_status_interface()
+        original_mode = interface._simulation_mode
+        original_battery = interface._battery_state
+
+        try:
+            interface._simulation_mode = False
+            msg = Mock()
+            msg.voltage = 24.5
+            msg.percentage = 0.85
+            msg.power_supply_status = 2
+            interface._battery_state = msg
+
+            level, status, voltage_v = interface.get_battery_level()
+            assert level == pytest.approx(85.0)
+            assert status == "discharging"
+            assert voltage_v == pytest.approx(24.5)
+        finally:
+            interface._simulation_mode = original_mode
+            interface._battery_state = original_battery
 
 
 class TestCameraTools:

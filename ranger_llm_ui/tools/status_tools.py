@@ -11,6 +11,7 @@ These tools query robot state and ROS 2 system information:
 
 import time
 import logging
+import math
 from typing import Optional, Type, Any
 
 from langchain.tools import BaseTool
@@ -113,11 +114,21 @@ class ROSStatusInterface:
         if self._battery_state is None:
             return -1.0, "unknown", 0.0
 
-        # Voltage: published as decivolts (e.g. 490 = 49.0 V), convert to V
-        voltage_v = self._battery_state.voltage / 10.0
+        # Some integrations publish decivolts (e.g. 490 => 49.0V), others publish volts.
+        voltage_raw = float(getattr(self._battery_state, "voltage", 0.0) or 0.0)
+        voltage_v = voltage_raw / 10.0 if voltage_raw > 100.0 else voltage_raw
 
-        # Use percentage from message if valid (0-100), otherwise -1 (unknown)
-        level = self._battery_state.percentage
+        # BatteryState.percentage is commonly 0..1, but some systems publish 0..100.
+        try:
+            level_raw = float(getattr(self._battery_state, "percentage", float("nan")))
+        except (TypeError, ValueError):
+            level_raw = float("nan")
+        level = -1.0
+        if not math.isnan(level_raw):
+            if 0.0 <= level_raw <= 1.0:
+                level = level_raw * 100.0
+            elif 0.0 <= level_raw <= 100.0:
+                level = level_raw
 
         # Determine status from power_supply_status
         # sensor_msgs/BatteryState: 0=UNKNOWN, 1=CHARGING, 2=DISCHARGING, 3=NOT_CHARGING, 4=FULL
@@ -358,8 +369,12 @@ class SystemHealthTool(BaseTool):
             if not all_topics_ok:
                 missing = [t for t, ok in topic_status.items() if not ok]
                 issues.append(f"Missing topics: {', '.join(missing)}")
-            if level >= 0 and level <= 10:
+            if level < 0:
+                issues.append("Battery status unavailable")
+            elif level <= 10:
                 issues.append("Critical battery level")
+            if not issues:
+                issues.append("Unknown health issue")
             lines.append(f"  Overall: ISSUES DETECTED - {'; '.join(issues)}")
             success = False
 

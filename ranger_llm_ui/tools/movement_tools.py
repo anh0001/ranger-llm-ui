@@ -60,7 +60,9 @@ class ROSInterface:
 
     def initialize(self, node: Optional[Any] = None):
         """Initialize the ROS interface with a node."""
-        if self._initialized:
+        # Allow re-initialization when we previously started in simulation mode
+        # and a real ROS node becomes available later.
+        if self._initialized and not (self._simulation_mode and node is not None):
             return
 
         self._node = node
@@ -220,15 +222,17 @@ class MoveForwardTool(BaseTool):
             "move", distance_m=distance_m
         )
 
-        if not is_safe and "confirmation" in msg.lower():
+        if not is_safe:
+            requires_confirmation = "confirmation" in msg.lower()
+            prefix = "CONFIRMATION REQUIRED" if requires_confirmation else "SAFETY BLOCKED"
             log_tool_call(
                 tool_name=self.name,
                 parameters={"distance_m": distance_m},
                 result=msg,
                 success=False,
-                error="Confirmation required",
+                error="Confirmation required" if requires_confirmation else msg,
             )
-            return f"CONFIRMATION REQUIRED: {msg}"
+            return f"{prefix}: {msg}"
 
         validated_distance = params.get("distance_m", distance_m)
         velocity = params.get("velocity_mps", 0.2)
@@ -325,15 +329,17 @@ class MoveBackwardTool(BaseTool):
             "move", distance_m=distance_m
         )
 
-        if not is_safe and "confirmation" in msg.lower():
+        if not is_safe:
+            requires_confirmation = "confirmation" in msg.lower()
+            prefix = "CONFIRMATION REQUIRED" if requires_confirmation else "SAFETY BLOCKED"
             log_tool_call(
                 tool_name=self.name,
                 parameters={"distance_m": distance_m},
                 result=msg,
                 success=False,
-                error="Confirmation required",
+                error="Confirmation required" if requires_confirmation else msg,
             )
-            return f"CONFIRMATION REQUIRED: {msg}"
+            return f"{prefix}: {msg}"
 
         validated_distance = params.get("distance_m", distance_m)
         velocity = params.get("velocity_mps", 0.2)
@@ -408,6 +414,18 @@ class TurnAngleTool(BaseTool):
         is_safe, msg, params = self.safety_guard.check_command_safety(
             "turn", angle_deg=angle_deg
         )
+
+        if not is_safe:
+            requires_confirmation = "confirmation" in msg.lower()
+            prefix = "CONFIRMATION REQUIRED" if requires_confirmation else "SAFETY BLOCKED"
+            log_tool_call(
+                tool_name=self.name,
+                parameters={"angle_deg": angle_deg},
+                result=msg,
+                success=False,
+                error="Confirmation required" if requires_confirmation else msg,
+            )
+            return f"{prefix}: {msg}"
 
         validated_angle = params.get("angle_deg", angle_deg)
         angular_velocity_dps = params.get("angular_velocity_dps", 30.0)  # deg/s
