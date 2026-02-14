@@ -1,0 +1,14 @@
+# Goal: Rotate in place by a specified angle
+float64 angle_deg                  # Angle in degrees (positive=clockwise, negative=counterclockwise)
+float64 max_angular_velocity_dps   # Maximum angular velocity in degrees/second
+---
+# Result
+float64 angle_rotated_deg   # Actual angle rotated in degrees
+float64 elapsed_time_s      # Time taken in seconds
+bool success                # Whether goal completed successfully
+string message              # Human-readable result message
+---
+# Feedback
+float64 angle_remaining_deg            # Angle still to rotate
+float64 elapsed_time_s                 # Time elapsed so far
+float64 current_angular_velocity_dps   # Current angular velocity in degrees/second

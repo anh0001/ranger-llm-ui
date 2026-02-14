@@ -50,6 +50,7 @@ setup(
     entry_points={
         'console_scripts': [
             'ui_node = ranger_llm_ui.ui_node:main',
+            'movement_server = ranger_llm_ui.movement_action_server:main',
         ],
     },
 )

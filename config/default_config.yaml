@@ -61,6 +61,23 @@ ros:
     odom: /odom
     battery_state: /battery_state
 
+  # Action servers for closed-loop movement control
+  actions:
+    drive_distance: /drive_distance
+    rotate_angle: /rotate_angle
+
+  # Action server control loop rate (Hz)
+  action_control_rate: 20.0
+
+  # Distance tolerance for drive goal completion (meters)
+  distance_tolerance: 0.05
+
+  # Angle tolerance for rotate goal completion (degrees)
+  angle_tolerance: 1.0
+
+  # Timeout waiting for action server to become available (seconds)
+  action_server_timeout: 5.0
+
 # Camera Configuration
 camera:
   # Image resolution for LLM consumption (reduced defaults for token efficiency)

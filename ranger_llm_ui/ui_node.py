@@ -49,6 +49,18 @@ except ImportError:
     ROS_AVAILABLE = False
     logger.warning("ROS 2 (rclpy) not available. Running in simulation mode.")
 
+# Try to import the movement action server (requires ranger_msgs to be built)
+try:
+    from ranger_llm_ui.movement_action_server import MovementActionServer
+    ACTION_SERVER_AVAILABLE = True
+except ImportError:
+    ACTION_SERVER_AVAILABLE = False
+    if ROS_AVAILABLE:
+        logger.warning(
+            "Movement action server not available. "
+            "Build ranger_msgs first: colcon build --packages-select ranger_msgs"
+        )
+
 
 class RangerUINode:
     """
@@ -111,22 +123,48 @@ class RangerUINode:
             self._node = rclpy.create_node(self.node_name)
             logger.info(f"ROS 2 node '{self.node_name}' initialized")
 
-            # Start spinning in background thread
+            # Start spinning UI node in background thread
             self._executor = MultiThreadedExecutor()
             self._executor.add_node(self._node)
             self._spin_thread = threading.Thread(target=self._spin_ros, daemon=True)
             self._spin_thread.start()
+
+            # Start movement action server in its own executor/thread.
+            # It must NOT share an executor with the action client (UI node)
+            # to avoid duplicate goal ID errors in ROS 2 Humble.
+            self._movement_server = None
+            self._movement_executor = None
+            self._movement_spin_thread = None
+            if ACTION_SERVER_AVAILABLE:
+                try:
+                    self._movement_server = MovementActionServer()
+                    self._movement_executor = MultiThreadedExecutor()
+                    self._movement_executor.add_node(self._movement_server)
+                    self._movement_spin_thread = threading.Thread(
+                        target=self._spin_movement_server, daemon=True
+                    )
+                    self._movement_spin_thread.start()
+                    logger.info("Movement action server started in dedicated executor")
+                except Exception as e:
+                    logger.warning(f"Failed to start movement action server: {e}")
 
         except Exception as e:
             logger.error(f"Failed to initialize ROS 2: {e}")
             self._node = None
 
     def _spin_ros(self):
-        """Spin ROS 2 node in background."""
+        """Spin ROS 2 UI node in background."""
         try:
             self._executor.spin()
         except Exception as e:
             logger.error(f"ROS spin error: {e}")
+
+    def _spin_movement_server(self):
+        """Spin movement action server in its own background thread."""
+        try:
+            self._movement_executor.spin()
+        except Exception as e:
+            logger.error(f"Movement server spin error: {e}")
 
     def initialize_agent(self):
         """Initialize the LangChain agent."""

@@ -10,6 +10,7 @@ Usage:
 """
 
 import os
+import launch
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, ExecuteProcess
 from launch.substitutions import LaunchConfiguration, EnvironmentVariable
@@ -61,7 +62,9 @@ def generate_launch_description():
 
     # Build command with arguments
     # Note: We use ExecuteProcess because we need to pass command-line args
-    # to the Python script in a way that ROS 2 node doesn't directly support
+    # to the Python script in a way that ROS 2 node doesn't directly support.
+    # The UI node composes the movement action server in-process, but we also
+    # provide a standalone movement server node for independent use.
     ui_node = ExecuteProcess(
         cmd=[
             'python3', '-m', 'ranger_llm_ui.ui_node',
@@ -73,11 +76,32 @@ def generate_launch_description():
         output='screen',
     )
 
+    # Standalone movement action server (optional — the UI node already
+    # composes one in-process, but this can be used when running the
+    # action server separately, e.g. on the robot while the UI runs remotely)
+    movement_server_node = Node(
+        package='ranger_llm_ui',
+        executable='movement_server',
+        name='ranger_movement_server',
+        output='screen',
+        condition=launch.conditions.IfCondition(
+            LaunchConfiguration('standalone_movement_server', default='false')
+        ),
+    )
+
+    standalone_movement_arg = DeclareLaunchArgument(
+        'standalone_movement_server',
+        default_value='false',
+        description='Launch movement action server as a standalone node'
+    )
+
     return LaunchDescription([
         llm_provider_arg,
         llm_model_arg,
         gradio_port_arg,
         share_arg,
         simple_mode_arg,
+        standalone_movement_arg,
         ui_node,
+        movement_server_node,
     ])

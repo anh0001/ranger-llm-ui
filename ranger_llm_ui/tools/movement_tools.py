@@ -11,6 +11,7 @@ These tools wrap ROS 2 actions for robot movement:
 import time
 import math
 import logging
+import threading
 from typing import Optional, Type, Any
 
 from langchain.tools import BaseTool
@@ -33,6 +34,7 @@ logger = logging.getLogger(__name__)
 try:
     import rclpy
     from rclpy.node import Node
+    from rclpy.action import ActionClient
     from geometry_msgs.msg import Twist
     from nav_msgs.msg import Odometry
     ROS_AVAILABLE = True
@@ -40,13 +42,30 @@ except ImportError:
     ROS_AVAILABLE = False
     logger.warning("ROS 2 (rclpy) not available. Running in simulation mode.")
 
+# Try to import action definitions
+try:
+    from ranger_msgs.action import DriveDistance, RotateAngle
+    ACTIONS_AVAILABLE = True
+except ImportError:
+    ACTIONS_AVAILABLE = False
+    if ROS_AVAILABLE:
+        logger.warning(
+            "ranger_msgs not available. "
+            "Build ranger_msgs package first: colcon build --packages-select ranger_msgs"
+        )
+
+
+# Default timeouts
+ACTION_SERVER_WAIT_TIMEOUT_S = 5.0
+ACTION_GOAL_TIMEOUT_S = 60.0
+
 
 class ROSInterface:
     """
     Singleton interface for ROS 2 communication.
 
-    This class manages the ROS 2 node and provides methods for publishing
-    velocity commands and subscribing to odometry.
+    This class manages the ROS 2 node and provides methods for sending
+    movement action goals and subscribing to odometry.
     """
 
     _instance: Optional["ROSInterface"] = None
@@ -70,9 +89,13 @@ class ROSInterface:
         self._odom_sub = None
         self._current_odom: Optional[Any] = None
         self._simulation_mode = not ROS_AVAILABLE or node is None
+        self._drive_client = None
+        self._rotate_client = None
+        self._active_goal_handle = None
+        self._goal_lock = threading.Lock()
 
         if not self._simulation_mode and self._node is not None:
-            # Create publisher for velocity commands
+            # Create publisher for emergency stop (direct velocity override)
             self._cmd_vel_pub = self._node.create_publisher(
                 Twist, "/cmd_vel", 10
             )
@@ -83,7 +106,21 @@ class ROSInterface:
                 self._odom_callback,
                 10
             )
-            logger.info("ROS interface initialized with node")
+
+            # Create action clients
+            if ACTIONS_AVAILABLE:
+                self._drive_client = ActionClient(
+                    self._node, DriveDistance, 'drive_distance'
+                )
+                self._rotate_client = ActionClient(
+                    self._node, RotateAngle, 'rotate_angle'
+                )
+                logger.info("ROS interface initialized with action clients")
+            else:
+                logger.warning(
+                    "ROS interface initialized WITHOUT action clients "
+                    "(ranger_msgs not available)"
+                )
         else:
             logger.info("ROS interface running in simulation mode")
 
@@ -98,7 +135,7 @@ class ROSInterface:
         return self._simulation_mode
 
     def publish_velocity(self, linear_x: float = 0.0, angular_z: float = 0.0):
-        """Publish a velocity command."""
+        """Publish a velocity command directly (used for emergency stop)."""
         if self._simulation_mode:
             logger.debug(f"[SIM] Publishing velocity: linear={linear_x}, angular={angular_z}")
             return
@@ -110,13 +147,170 @@ class ROSInterface:
             self._cmd_vel_pub.publish(msg)
 
     def stop(self):
-        """Send stop command (zero velocity)."""
+        """Cancel active goals and send stop command (zero velocity)."""
+        self.cancel_active_goal()
         self.publish_velocity(0.0, 0.0)
         # Publish multiple times to ensure delivery
         for _ in range(3):
             self.publish_velocity(0.0, 0.0)
             if not self._simulation_mode:
                 time.sleep(0.05)
+
+    def cancel_active_goal(self):
+        """Cancel the currently active action goal, if any."""
+        with self._goal_lock:
+            if self._active_goal_handle is not None:
+                logger.info("Cancelling active movement goal")
+                try:
+                    self._active_goal_handle.cancel_goal_async()
+                except Exception as e:
+                    logger.warning(f"Error cancelling goal: {e}")
+                self._active_goal_handle = None
+
+    @staticmethod
+    def _wait_for_future(future, timeout_s: float) -> bool:
+        """
+        Wait for an rclpy future to complete using a threading Event.
+
+        This avoids calling rclpy.spin_until_future_complete() which deadlocks
+        when the node is already being spun by a MultiThreadedExecutor.
+
+        Returns True if the future completed, False on timeout.
+        """
+        event = threading.Event()
+        future.add_done_callback(lambda _: event.set())
+        return event.wait(timeout=timeout_s)
+
+    def drive_distance(
+        self,
+        distance_m: float,
+        max_velocity_mps: float,
+        timeout_s: float = ACTION_GOAL_TIMEOUT_S,
+    ) -> str:
+        """
+        Send a DriveDistance action goal and block until completion.
+
+        Args:
+            distance_m: Distance in meters (positive=forward, negative=backward).
+            max_velocity_mps: Maximum velocity in m/s.
+            timeout_s: Maximum time to wait for result.
+
+        Returns:
+            Human-readable result string.
+        """
+        if self._drive_client is None:
+            return "Error: DriveDistance action client not available"
+
+        # Wait for action server
+        if not self._drive_client.wait_for_server(
+            timeout_sec=ACTION_SERVER_WAIT_TIMEOUT_S
+        ):
+            return (
+                "Error: drive_distance action server not available. "
+                "Ensure the movement_action_server node is running."
+            )
+
+        # Build goal
+        goal_msg = DriveDistance.Goal()
+        goal_msg.distance_m = float(distance_m)
+        goal_msg.max_velocity_mps = float(max_velocity_mps)
+
+        logger.info(f"Sending drive goal: {distance_m:.2f}m at max {max_velocity_mps:.2f} m/s")
+
+        # Send goal (future is resolved by the executor's background thread)
+        send_future = self._drive_client.send_goal_async(goal_msg)
+        if not self._wait_for_future(send_future, timeout_s=5.0):
+            return "Error: Timed out waiting for drive goal to be accepted"
+
+        goal_handle = send_future.result()
+        if goal_handle is None or not goal_handle.accepted:
+            return "Error: Drive goal was rejected by action server"
+
+        # Track active goal for cancellation
+        with self._goal_lock:
+            self._active_goal_handle = goal_handle
+
+        # Wait for result
+        result_future = goal_handle.get_result_async()
+        completed = self._wait_for_future(result_future, timeout_s=timeout_s)
+
+        # Clear active goal
+        with self._goal_lock:
+            self._active_goal_handle = None
+
+        if not completed or result_future.result() is None:
+            self.publish_velocity(0.0, 0.0)
+            return f"Error: Drive action timed out after {timeout_s:.0f}s"
+
+        result = result_future.result().result
+        return result.message
+
+    def rotate_angle(
+        self,
+        angle_deg: float,
+        max_angular_velocity_dps: float,
+        timeout_s: float = ACTION_GOAL_TIMEOUT_S,
+    ) -> str:
+        """
+        Send a RotateAngle action goal and block until completion.
+
+        Args:
+            angle_deg: Angle in degrees (positive=clockwise, negative=CCW).
+            max_angular_velocity_dps: Maximum angular velocity in degrees/second.
+            timeout_s: Maximum time to wait for result.
+
+        Returns:
+            Human-readable result string.
+        """
+        if self._rotate_client is None:
+            return "Error: RotateAngle action client not available"
+
+        # Wait for action server
+        if not self._rotate_client.wait_for_server(
+            timeout_sec=ACTION_SERVER_WAIT_TIMEOUT_S
+        ):
+            return (
+                "Error: rotate_angle action server not available. "
+                "Ensure the movement_action_server node is running."
+            )
+
+        # Build goal
+        goal_msg = RotateAngle.Goal()
+        goal_msg.angle_deg = float(angle_deg)
+        goal_msg.max_angular_velocity_dps = float(max_angular_velocity_dps)
+
+        logger.info(
+            f"Sending rotate goal: {angle_deg:.1f}° at max "
+            f"{max_angular_velocity_dps:.1f} deg/s"
+        )
+
+        # Send goal
+        send_future = self._rotate_client.send_goal_async(goal_msg)
+        if not self._wait_for_future(send_future, timeout_s=5.0):
+            return "Error: Timed out waiting for rotate goal to be accepted"
+
+        goal_handle = send_future.result()
+        if goal_handle is None or not goal_handle.accepted:
+            return "Error: Rotate goal was rejected by action server"
+
+        # Track active goal for cancellation
+        with self._goal_lock:
+            self._active_goal_handle = goal_handle
+
+        # Wait for result
+        result_future = goal_handle.get_result_async()
+        completed = self._wait_for_future(result_future, timeout_s=timeout_s)
+
+        # Clear active goal
+        with self._goal_lock:
+            self._active_goal_handle = None
+
+        if not completed or result_future.result() is None:
+            self.publish_velocity(0.0, 0.0)
+            return f"Error: Rotate action timed out after {timeout_s:.0f}s"
+
+        result = result_future.result().result
+        return result.message
 
     def get_current_position(self) -> Optional[tuple[float, float, float]]:
         """Get current position (x, y, yaw) from odometry."""
@@ -198,7 +392,7 @@ class MoveForwardTool(BaseTool):
     name: str = "MoveForward"
     description: str = (
         "Move the robot forward by a specified distance in meters. "
-        "Use this when you need to move the robot forward. "
+        "Uses closed-loop odometry control for accurate movement. "
         "Input should be the distance in meters (0.1 to 5.0)."
     )
     args_schema: Type[BaseModel] = MoveForwardInput
@@ -256,23 +450,13 @@ class MoveForwardTool(BaseTool):
             time.sleep(min(travel_time, 1.0))  # Cap simulation time
             result = f"Moved forward {validated_distance:.2f} meters (simulated)"
         else:
-            # Real robot movement
+            # Send action goal for closed-loop movement
             try:
-                travel_time = validated_distance / velocity
-                start_pos = ros.get_current_position()
-
-                # Publish velocity command
-                ros.publish_velocity(linear_x=velocity)
-
-                # Wait for movement to complete (simplified - real impl would use odometry)
-                time.sleep(travel_time)
-
-                # Stop
-                ros.stop()
-
+                result = ros.drive_distance(
+                    distance_m=validated_distance,
+                    max_velocity_mps=velocity,
+                )
                 command.status = CommandStatus.COMPLETED
-                result = f"Moved forward {validated_distance:.2f} meters"
-
             except Exception as e:
                 ros.stop()
                 command.status = CommandStatus.FAILED
@@ -305,7 +489,7 @@ class MoveBackwardTool(BaseTool):
     name: str = "MoveBackward"
     description: str = (
         "Move the robot backward by a specified distance in meters. "
-        "Use this when you need to move the robot backward or reverse. "
+        "Uses closed-loop odometry control for accurate movement. "
         "Input should be the distance in meters (0.1 to 5.0)."
     )
     args_schema: Type[BaseModel] = MoveBackwardInput
@@ -354,12 +538,13 @@ class MoveBackwardTool(BaseTool):
             time.sleep(min(travel_time, 1.0))
             result = f"Moved backward {validated_distance:.2f} meters (simulated)"
         else:
+            # Send action goal with negative distance for backward movement
             try:
-                travel_time = validated_distance / velocity
-                ros.publish_velocity(linear_x=-velocity)
-                time.sleep(travel_time)
-                ros.stop()
-                result = f"Moved backward {validated_distance:.2f} meters"
+                result = ros.drive_distance(
+                    distance_m=-validated_distance,
+                    max_velocity_mps=velocity,
+                )
+                command_status = CommandStatus.COMPLETED
             except Exception as e:
                 ros.stop()
                 log_tool_call(
@@ -392,6 +577,7 @@ class TurnAngleTool(BaseTool):
         "Rotate the robot in place by a specified angle in degrees. "
         "Positive angle = turn right/clockwise. "
         "Negative angle = turn left/counterclockwise. "
+        "Uses closed-loop odometry control for accurate rotation. "
         "Input should be the angle in degrees (-360 to 360)."
     )
     args_schema: Type[BaseModel] = TurnAngleInput
@@ -429,7 +615,6 @@ class TurnAngleTool(BaseTool):
 
         validated_angle = params.get("angle_deg", angle_deg)
         angular_velocity_dps = params.get("angular_velocity_dps", 30.0)  # deg/s
-        angular_velocity_rad = angular_velocity_dps * (math.pi / 180)
 
         ros = get_ros_interface()
 
@@ -443,17 +628,12 @@ class TurnAngleTool(BaseTool):
             time.sleep(min(turn_time, 1.0))
             result = f"Turned {direction} {abs(validated_angle):.1f} degrees (simulated)"
         else:
+            # Send action goal for closed-loop rotation
             try:
-                turn_time = abs(validated_angle) / angular_velocity_dps
-                # Positive angle = clockwise = negative angular.z in ROS convention
-                angular_z = -angular_velocity_rad if validated_angle > 0 else angular_velocity_rad
-
-                ros.publish_velocity(angular_z=angular_z)
-                time.sleep(turn_time)
-                ros.stop()
-
-                direction = "right" if validated_angle > 0 else "left"
-                result = f"Turned {direction} {abs(validated_angle):.1f} degrees"
+                result = ros.rotate_angle(
+                    angle_deg=validated_angle,
+                    max_angular_velocity_dps=angular_velocity_dps,
+                )
             except Exception as e:
                 ros.stop()
                 log_tool_call(
@@ -485,7 +665,7 @@ class StopRobotTool(BaseTool):
     description: str = (
         "Immediately stop all robot movement. "
         "Use this in emergencies or when you need to halt the robot. "
-        "This will cancel any ongoing movement commands."
+        "This will cancel any ongoing movement action goals and stop the robot."
     )
     args_schema: Type[BaseModel] = StopRobotInput
     return_direct: bool = False
@@ -505,8 +685,8 @@ class StopRobotTool(BaseTool):
             result = "Robot stopped (simulated)"
         else:
             try:
-                ros.stop()
-                result = "Robot stopped"
+                ros.stop()  # Cancels active goals + publishes zero velocity
+                result = "Robot stopped. Any active movement goals have been cancelled."
             except Exception as e:
                 log_tool_call(
                     tool_name=self.name,
@@ -519,7 +699,7 @@ class StopRobotTool(BaseTool):
                 return f"Error stopping robot: {e}"
 
         if reason:
-            result += f". Reason: {reason}"
+            result += f" Reason: {reason}"
 
         execution_time = (time.time() - start_time) * 1000
         log_tool_call(

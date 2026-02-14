@@ -1,0 +1,14 @@
+# Goal: Drive a specified distance
+float64 distance_m         # Distance in meters (positive=forward, negative=backward)
+float64 max_velocity_mps   # Maximum velocity in m/s (will be safety-clamped)
+---
+# Result
+float64 distance_traveled_m  # Actual distance traveled
+float64 elapsed_time_s       # Time taken in seconds
+bool success                 # Whether goal completed successfully
+string message               # Human-readable result message
+---
+# Feedback
+float64 distance_remaining_m   # Distance still to travel
+float64 elapsed_time_s         # Time elapsed so far
+float64 current_velocity_mps   # Current velocity
