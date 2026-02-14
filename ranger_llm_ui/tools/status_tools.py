@@ -113,11 +113,11 @@ class ROSStatusInterface:
         if self._battery_state is None:
             return -1.0, "unknown", 0.0
 
-        # BatteryState percentage is already 0-100 (not 0.0-1.0) for this robot
-        level = self._battery_state.percentage
+        # Voltage: published as decivolts (e.g. 490 = 49.0 V), convert to V
+        voltage_v = self._battery_state.voltage / 10.0
 
-        # Voltage: published in mV, convert to V
-        voltage_v = self._battery_state.voltage / 1000.0 if self._battery_state.voltage > 100 else self._battery_state.voltage
+        # Use percentage from message if valid (0-100), otherwise -1 (unknown)
+        level = self._battery_state.percentage
 
         # Determine status from power_supply_status
         # sensor_msgs/BatteryState: 0=UNKNOWN, 1=CHARGING, 2=DISCHARGING, 3=NOT_CHARGING, 4=FULL
@@ -266,23 +266,28 @@ class BatteryStatusTool(BaseTool):
         interface = get_status_interface()
         level, status, voltage_v = interface.get_battery_level()
 
-        if level < 0:
+        if level < 0 and voltage_v <= 0:
             result = "Battery status unavailable"
             success = False
         else:
-            result = f"Battery level: {level:.1f}% ({status})"
+            parts = []
             if voltage_v > 0:
-                result += f", Voltage: {voltage_v:.2f} V"
+                parts.append(f"Voltage: {voltage_v:.1f} V")
+            if level >= 0:
+                parts.append(f"{level:.1f}%")
+            parts.append(f"({status})")
+            result = "Battery: " + " ".join(parts)
             success = True
 
-            # Update safety guard with battery level
-            safety_guard = get_safety_guard()
-            safety_guard.update_battery_level(level)
+            # Update safety guard with battery level if percentage is available
+            if level >= 0:
+                safety_guard = get_safety_guard()
+                safety_guard.update_battery_level(level)
 
             # Add warnings if applicable (check critical first)
-            if level < 10:
+            if 0 <= level < 10:
                 result += " - CRITICAL: Battery very low!"
-            elif level < 20:
+            elif 0 <= level < 20:
                 result += " - WARNING: Low battery!"
 
         execution_time = (time.time() - start_time) * 1000
