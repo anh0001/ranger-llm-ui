@@ -237,9 +237,10 @@ def get_status_interface() -> ROSStatusInterface:
     global _status_interface
     if _status_interface is None:
         _status_interface = ROSStatusInterface()
-    # Ensure interface is initialized (with no node if not already initialized)
+    # Only auto-initialize (simulation mode) if not yet initialized and no node is expected.
+    # Prefer explicit initialization via initialize_status_interface(node).
     if not _status_interface._initialized:
-        _status_interface.initialize()
+        _status_interface.initialize(None)
     return _status_interface
 
 
@@ -361,7 +362,9 @@ class SystemHealthTool(BaseTool):
             lines.append(f"  Battery: {level:.1f}%")
 
         # Overall status
-        if all_topics_ok and level > 10:
+        # Battery unavailable (level < 0) means no message received yet — not a hard failure
+        battery_critical = 0 <= level <= 10
+        if all_topics_ok and not battery_critical:
             lines.append("  Overall: HEALTHY - Robot is ready to operate")
             success = True
         else:
@@ -369,9 +372,7 @@ class SystemHealthTool(BaseTool):
             if not all_topics_ok:
                 missing = [t for t, ok in topic_status.items() if not ok]
                 issues.append(f"Missing topics: {', '.join(missing)}")
-            if level < 0:
-                issues.append("Battery status unavailable")
-            elif level <= 10:
+            if battery_critical:
                 issues.append("Critical battery level")
             if not issues:
                 issues.append("Unknown health issue")
