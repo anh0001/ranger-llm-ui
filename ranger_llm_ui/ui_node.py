@@ -347,11 +347,11 @@ class RangerUINode:
         assets_dir = Path(__file__).parent / "assets"
         robot_image_path = assets_dir / "robot_ranger_garden.webp"
 
-        with gr.Blocks(title="Ranger Garden Assistant") as demo:
+        with gr.Blocks(title="Ranger Robot Assistant") as demo:
             # Centered title
             gr.Markdown(
                 """
-                <h1 style="text-align: center;">Ranger Garden Assistant</h1>
+                <h1 style="text-align: center;">Ranger Robot Assistant</h1>
                 """,
                 elem_id="title"
             )
@@ -627,7 +627,7 @@ class RangerUINode:
                 """
                 <div style="text-align: center; margin-top: 40px; padding: 20px; border-top: 1px solid #e0e0e0;">
                     <a href="https://github.com/anh0001/ranger-garden-assistant" target="_blank" style="color: #0066cc; text-decoration: none; font-size: 14px;">
-                        GitHub: Ranger Garden Assistant
+                        GitHub: Ranger Robot Assistant
                     </a>
                 </div>
                 """,
