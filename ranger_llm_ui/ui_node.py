@@ -719,7 +719,7 @@ def main():
         "--provider",
         type=str,
         default=os.getenv("LLM_PROVIDER", "openai"),
-        choices=["openai", "ollama", "anthropic", "claude_code"],
+        choices=["openai", "ollama", "anthropic", "claude_code", "claude_proxy"],
         help="LLM provider (default: openai)",
     )
     parser.add_argument(

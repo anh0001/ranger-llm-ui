@@ -50,6 +50,68 @@
             "dependsOn": "Build with colcon",
             "isBackground": true,
             "problemMatcher": []
+        },
+        {
+            "label": "Start CLIProxyAPI (Claude OAuth)",
+            "detail": "Starts CLIProxyAPI on :8317 wrapping Claude Pro/Max OAuth as an Anthropic-compatible HTTP endpoint. One-time login via './cli-proxy-api -claude-login -no-browser -config config.yaml' before first run.",
+            "type": "shell",
+            "command": "bash",
+            "args": [
+                "-c",
+                "cd ${env:HOME}/tools/cliproxyapi && pkill -f cli-proxy-api 2>/dev/null; sleep 1; ./cli-proxy-api -config config.yaml"
+            ],
+            "group": "none",
+            "isBackground": true,
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "group": "ranger-runtime"
+            }
+        },
+        {
+            "label": "Launch Ranger LLM UI (claude_proxy, simulation)",
+            "detail": "Launches the Gradio UI with provider=claude_proxy using Claude Pro/Max via CLIProxyAPI. Run 'Start CLIProxyAPI' first.",
+            "type": "shell",
+            "command": "bash",
+            "args": [
+                "-c",
+                "set -a && source .env && set +a && export PYTHONUSERBASE=\"/home/robofi/.local/ranger_llm_ui_py310\" && export PYTHONPATH=\"/home/robofi/.local/ranger_llm_ui_py310/lib/python3.10/site-packages:$PYTHONPATH\" && export LLM_PROVIDER=claude_proxy && export LLM_MODEL=${LLM_MODEL:-sonnet-4.6} && python -m ranger_llm_ui.ui_node --provider claude_proxy --model ${LLM_MODEL:-sonnet-4.6}"
+            ],
+            "group": "none",
+            "isBackground": true,
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "group": "ranger-runtime"
+            }
+        },
+        {
+            "label": "Run claude_proxy stack (proxy + UI)",
+            "detail": "Convenience: starts CLIProxyAPI and the Ranger UI side-by-side in dedicated panels.",
+            "dependsOn": [
+                "Start CLIProxyAPI (Claude OAuth)",
+                "Launch Ranger LLM UI (claude_proxy, simulation)"
+            ],
+            "dependsOrder": "parallel",
+            "problemMatcher": []
+        },
+        {
+            "label": "CLIProxyAPI: Claude OAuth Login (one-time)",
+            "detail": "Run once to authenticate CLIProxyAPI with your Claude Pro/Max subscription. Follow the printed SSH-tunnel + browser instructions.",
+            "type": "shell",
+            "command": "bash",
+            "args": [
+                "-c",
+                "cd ${env:HOME}/tools/cliproxyapi && ./cli-proxy-api -claude-login -no-browser -config config.yaml"
+            ],
+            "group": "none",
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            }
         }
     ]
 }
