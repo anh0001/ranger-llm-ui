@@ -2,12 +2,12 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "Build ranger_msgs",
+            "label": "Build ranger_llm_msgs",
             "type": "shell",
             "command": "bash",
             "args": [
                 "-c",
-                "export PYTHONUSERBASE=\"/home/robofi/.local/ranger_llm_ui_py310\" && colcon build --paths . ranger_msgs --packages-select ranger_msgs"
+                "export PYTHONUSERBASE=\"/home/robofi/.local/ranger_llm_ui_py310\" && colcon build --paths . ranger_llm_msgs --packages-select ranger_llm_msgs"
             ],
             "group": "build",
             "problemMatcher": [
@@ -24,7 +24,7 @@
             "command": "bash",
             "args": [
                 "-c",
-                "export PYTHONUSERBASE=\"/home/robofi/.local/ranger_llm_ui_py310\" && colcon build --paths . ranger_msgs --packages-select ranger_msgs ranger_llm_ui"
+                "export PYTHONUSERBASE=\"/home/robofi/.local/ranger_llm_ui_py310\" && colcon build --paths . ranger_llm_msgs --packages-select ranger_llm_msgs ranger_llm_ui"
             ],
             "group": {
                 "kind": "build",

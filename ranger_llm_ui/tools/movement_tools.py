@@ -44,14 +44,14 @@ except ImportError:
 
 # Try to import action definitions
 try:
-    from ranger_msgs.action import DriveDistance, RotateAngle
+    from ranger_llm_msgs.action import DriveDistance, RotateAngle
     ACTIONS_AVAILABLE = True
 except ImportError:
     ACTIONS_AVAILABLE = False
     if ROS_AVAILABLE:
         logger.warning(
-            "ranger_msgs not available. "
-            "Build ranger_msgs package first: colcon build --packages-select ranger_msgs"
+            "ranger_llm_msgs not available. "
+            "Build ranger_llm_msgs package first: colcon build --packages-select ranger_llm_msgs"
         )
 
 
@@ -119,7 +119,7 @@ class ROSInterface:
             else:
                 logger.warning(
                     "ROS interface initialized WITHOUT action clients "
-                    "(ranger_msgs not available)"
+                    "(ranger_llm_msgs not available)"
                 )
         else:
             logger.info("ROS interface running in simulation mode")
