@@ -48,6 +48,93 @@ logger = logging.getLogger(__name__)
 
 
 _CLAUDE_CODE_SDK_PATCHED = False
+_CLAUDE_ENV_STRIPPED = False
+
+
+def _strip_nested_claude_env():
+    """
+    Strip Claude Code environment variables that leak into this process when
+    launched from inside a Claude Code terminal session, AND patch the
+    claude-code-sdk subprocess transport to spawn the `claude` CLI with a
+    minimal whitelisted env (mirroring `env -i`). Anything beyond the
+    whitelist — including ROS LD_LIBRARY_PATH, AMENT_PREFIX_PATH, nested-AI
+    markers — has been observed to cause the spawned claude CLI to exit 1
+    with empty stderr when this process is launched from inside Claude Code.
+    """
+    global _CLAUDE_ENV_STRIPPED
+    if _CLAUDE_ENV_STRIPPED:
+        return
+
+    leak_vars = [
+        "CLAUDECODE",
+        "CLAUDE_CODE_ENTRYPOINT",
+        "CLAUDE_CODE_EXECPATH",
+        "CLAUDE_CODE_SESSION_ID",
+        "CLAUDE_EFFORT",
+        "AI_AGENT",
+        "GIT_EDITOR",
+    ]
+    stripped = [v for v in leak_vars if v in os.environ]
+    for v in stripped:
+        os.environ.pop(v, None)
+    if stripped:
+        logger.info(f"Stripped leaked Claude Code env vars: {stripped}")
+
+    # Patch SDK subprocess spawn to enforce minimal env for the `claude` CLI.
+    try:
+        from claude_code_sdk._internal.transport import subprocess_cli as _scli
+
+        _orig_connect = _scli.SubprocessCLITransport.connect
+
+        # Also patch anyio.open_process to redirect stderr to file for debug
+        import anyio
+        _orig_open_process = anyio.open_process
+
+        async def _patched_open_process(cmd, **kwargs):
+            try:
+                cmd_str = str(cmd)
+                if "claude" in cmd_str:
+                    f = open("/tmp/claude_stderr_capture.log", "ab", buffering=0)
+                    kwargs["stderr"] = f
+                    # Dump full cmd to file for inspection
+                    with open("/tmp/claude_cmd.log", "a") as cf:
+                        import json as _json
+                        cf.write(_json.dumps({
+                            "cmd": cmd if isinstance(cmd, list) else [cmd],
+                            "env_keys": sorted(kwargs.get('env', {}).keys()),
+                            "env_full": dict(kwargs.get('env', {})),
+                        }, indent=2, default=str) + "\n---\n")
+                    logger.warning("[open_process] claude invocation logged to /tmp/claude_cmd.log")
+            except Exception as e:
+                logger.warning(f"open_process patch err: {e}")
+            return await _orig_open_process(cmd, **kwargs)
+
+        anyio.open_process = _patched_open_process
+
+        async def _patched_connect(self):
+            allow = {
+                "HOME", "PATH", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE",
+                "SHELL", "TERM", "TMPDIR", "PWD",
+                "NODE_PATH", "NPM_CONFIG_PREFIX",
+                "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
+                "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL",
+            }
+            clean_env = {k: v for k, v in os.environ.items() if k in allow}
+            saved = dict(os.environ)
+            os.environ.clear()
+            os.environ.update(clean_env)
+            try:
+                return await _orig_connect(self)
+            finally:
+                os.environ.clear()
+                os.environ.update(saved)
+
+        _scli.SubprocessCLITransport.connect = _patched_connect
+        logger.info("Patched SubprocessCLITransport.connect to use minimal env for claude CLI")
+    except Exception as e:
+        logger.warning(f"Could not patch SDK subprocess env: {e}")
+
+    _CLAUDE_ENV_STRIPPED = True
 
 
 def _patch_claude_code_sdk_parser():
@@ -180,6 +267,7 @@ def create_llm(
             )
 
         _patch_claude_code_sdk_parser()
+        _strip_nested_claude_env()
 
         # Auth resolution (in order of precedence):
         # 1. CLAUDE_CODE_OAUTH_TOKEN env var (read by claude-code-sdk subprocess)
