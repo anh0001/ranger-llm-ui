@@ -211,6 +211,10 @@ def create_llm(
         if api_key:
             chat_kwargs["api_key"] = api_key
 
+        cli_path = os.getenv("CLAUDE_CODE_CLI_PATH")
+        if cli_path:
+            chat_kwargs["cli_path"] = cli_path
+
         chat_kwargs.update({
             k: v for k, v in kwargs.items() if k not in ["api_key", "oauth_token"]
         })
