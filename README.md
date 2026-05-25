@@ -6,7 +6,7 @@ LLM-driven natural language operator interface for the Ranger garden robot.
 
 - **Natural Language Control**: Control the robot using conversational commands like "move forward 1 meter" or "turn left 90 degrees"
 - **Safety First**: Built-in safety guards with velocity limits, distance validation, and emergency stop
-- **Multiple LLM Backends**: Support for OpenAI, Ollama (local), and Anthropic
+- **Multiple LLM Backends**: OpenAI, Ollama (local), Anthropic API, and **Claude Pro/Max subscription via OAuth** (no API key needed)
 - **ROS 2 Integration**: Native ROS 2 Humble support via rclpy
 - **Manual Override**: Emergency stop button and manual teleop controls always available
 
@@ -80,10 +80,73 @@ echo "LLM_MODEL=gpt-4o-mini" >> .env  # cheaper default for testing
 echo "LLM_PROVIDER=ollama" >> .env
 echo "OLLAMA_BASE_URL=http://localhost:11434" >> .env
 
-# Or for Anthropic (Claude):
+# Or for Anthropic (Claude, pay-per-token API key):
 echo "LLM_PROVIDER=anthropic" >> .env
 echo "ANTHROPIC_API_KEY=your_api_key_here" >> .env
+
+# Or for Claude Pro/Max subscription via CLIProxyAPI (no API key, OAuth):
+# See "Claude Pro/Max Subscription Setup" section below.
+echo "LLM_PROVIDER=claude_proxy" >> .env
+echo "LLM_MODEL=sonnet-4.6" >> .env
+echo "CLAUDE_PROXY_BASE_URL=http://127.0.0.1:8317" >> .env
+echo "CLAUDE_PROXY_API_KEY=ranger-local-key" >> .env
 ```
+
+### Claude Pro/Max Subscription Setup (claude_proxy)
+
+Use your existing Claude Pro/Max subscription as the LLM backend. No
+separate Anthropic API credits. Tool calling works end-to-end via LangChain
+`bind_tools()`. Routes through [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)
+which wraps Claude Code OAuth as an Anthropic-compatible HTTP endpoint.
+
+**1. Download CLIProxyAPI** (Go binary, prebuilt for linux/macOS):
+```bash
+mkdir -p ~/tools/cliproxyapi && cd ~/tools/cliproxyapi
+# Pick the asset matching your OS/arch from the releases page:
+# https://github.com/router-for-me/CLIProxyAPI/releases
+curl -sL -o p.tar.gz https://github.com/router-for-me/CLIProxyAPI/releases/download/v7.1.20/CLIProxyAPI_7.1.20_linux_aarch64.tar.gz
+tar xzf p.tar.gz && rm p.tar.gz
+cp config.example.yaml config.yaml
+# Edit config.yaml to set api-keys to a single value, e.g. "ranger-local-key"
+```
+
+**2. Authenticate via Claude OAuth (one-time):**
+```bash
+./cli-proxy-api -claude-login -no-browser -config config.yaml
+# Follow printed instructions:
+#  - On your local machine, SSH-tunnel localhost:54545
+#      ssh -L 54545:127.0.0.1:54545 <user>@<server>
+#  - Open the printed claude.ai URL in your local browser
+#  - Log in with your Pro/Max account, authorize
+# Credentials saved to ~/.cli-proxy-api/claude-<email>.json
+```
+
+**3. Run the proxy:**
+```bash
+nohup ./cli-proxy-api -config config.yaml > /tmp/cliproxy.log 2>&1 &
+# Listens on http://127.0.0.1:8317 by default.
+```
+
+**4. Install the LangChain Anthropic adapter** (one-time, in your ranger env):
+```bash
+export PYTHONUSERBASE="$HOME/.local/ranger_llm_ui_py310"
+pip install langchain-anthropic
+```
+
+**5. Run ranger-llm-ui pointing at the proxy:**
+```bash
+python -m ranger_llm_ui.ui_node --provider claude_proxy --model sonnet-4.6
+# Or set LLM_PROVIDER=claude_proxy in .env and launch normally.
+```
+
+**Available model aliases for claude_proxy:**
+`sonnet-4.6` (default), `sonnet-4.5`, `sonnet-4`, `opus`, `haiku-4.5`
+
+**Caveats:**
+- Counts against your Claude Pro/Max usage limit (same pool as Claude Code CLI).
+- Starting **2026-06-15**, Agent SDK / `claude -p` subscription usage draws from a separate monthly credit (Pro: $20/mo, Max 5x: $100/mo, Max 20x: $200/mo). Overage stops requests.
+- ToS gray area: unofficial wrapper. Can break if Anthropic updates Claude Code internals.
+- For production robot deployments with strict uptime needs, prefer `provider=anthropic` with a real API key.
 
 ### Cost Control (OpenAI)
 
@@ -142,8 +205,11 @@ The UI provides manual teleop buttons for direct control:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `LLM_PROVIDER` | LLM backend (openai, ollama, anthropic) | openai |
-| `LLM_MODEL` | Model name | provider default |
+| `LLM_PROVIDER` | LLM backend (openai, ollama, anthropic, claude_code, claude_proxy) | openai |
+| `LLM_MODEL` | Model name (claude_proxy: sonnet-4.6, opus, haiku-4.5, ...) | provider default |
+| `CLAUDE_PROXY_BASE_URL` | CLIProxyAPI URL (claude_proxy only) | http://127.0.0.1:8317 |
+| `CLAUDE_PROXY_API_KEY` | CLIProxyAPI key from its config.yaml (claude_proxy only) | ranger-local-key |
+| `CLAUDE_CODE_OAUTH_TOKEN` | OAuth token for direct Claude Code SDK (claude_code only) | unset |
 | `OPENAI_API_KEY` | OpenAI API key | - |
 | `OLLAMA_BASE_URL` | Ollama server URL | http://localhost:11434 |
 | `GRADIO_PORT` | Web UI port | 7860 |

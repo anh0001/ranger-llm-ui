@@ -24,7 +24,7 @@ from rclpy.executors import MultiThreadedExecutor
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 
-from ranger_msgs.action import DriveDistance, RotateAngle
+from ranger_llm_msgs.action import DriveDistance, RotateAngle
 
 logger = logging.getLogger(__name__)
 

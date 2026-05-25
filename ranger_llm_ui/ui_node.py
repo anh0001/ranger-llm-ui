@@ -49,7 +49,7 @@ except ImportError:
     ROS_AVAILABLE = False
     logger.warning("ROS 2 (rclpy) not available. Running in simulation mode.")
 
-# Try to import the movement action server (requires ranger_msgs to be built)
+# Try to import the movement action server (requires ranger_llm_msgs to be built)
 try:
     from ranger_llm_ui.movement_action_server import MovementActionServer
     ACTION_SERVER_AVAILABLE = True
@@ -58,7 +58,7 @@ except ImportError:
     if ROS_AVAILABLE:
         logger.warning(
             "Movement action server not available. "
-            "Build ranger_msgs first: colcon build --packages-select ranger_msgs"
+            "Build ranger_llm_msgs first: colcon build --packages-select ranger_llm_msgs"
         )
 
 
@@ -719,7 +719,7 @@ def main():
         "--provider",
         type=str,
         default=os.getenv("LLM_PROVIDER", "openai"),
-        choices=["openai", "ollama", "anthropic", "claude_code"],
+        choices=["openai", "ollama", "anthropic", "claude_code", "claude_proxy"],
         help="LLM provider (default: openai)",
     )
     parser.add_argument(

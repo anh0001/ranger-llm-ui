@@ -49,6 +49,38 @@ logger = logging.getLogger(__name__)
 
 _CLAUDE_CODE_SDK_PATCHED = False
 _CLAUDE_ENV_STRIPPED = False
+_LC_ANTHROPIC_PROXY_PATCHED = False
+
+
+def _patch_langchain_anthropic_for_proxy():
+    """
+    CLIProxyAPI returns `context_management` as a plain dict in streaming
+    `message_delta` events. langchain-anthropic 0.3.x calls `.model_dump()`
+    on it unconditionally, raising AttributeError. Patch the event
+    constructor to accept either a Pydantic model or a dict.
+    """
+    global _LC_ANTHROPIC_PROXY_PATCHED
+    if _LC_ANTHROPIC_PROXY_PATCHED:
+        return
+    try:
+        from langchain_anthropic import chat_models as _lcam
+    except ImportError:
+        return
+
+    _orig_fn = _lcam._make_message_chunk_from_anthropic_event
+
+    def _patched(event, *args, **kwargs):
+        cm = getattr(event, "context_management", None)
+        if cm is not None and not hasattr(cm, "model_dump"):
+            try:
+                event.context_management = None
+            except Exception:
+                pass
+        return _orig_fn(event, *args, **kwargs)
+
+    _lcam._make_message_chunk_from_anthropic_event = _patched
+    _LC_ANTHROPIC_PROXY_PATCHED = True
+    logger.info("Patched langchain-anthropic chunk builder to tolerate dict context_management from proxy")
 
 
 def _strip_nested_claude_env():
@@ -186,6 +218,7 @@ class LLMProvider(str, Enum):
     OLLAMA = "ollama"
     ANTHROPIC = "anthropic"
     CLAUDE_CODE = "claude_code"
+    CLAUDE_PROXY = "claude_proxy"
 
 
 def create_llm(
@@ -308,6 +341,51 @@ def create_llm(
         })
 
         return ChatClaudeCode(**chat_kwargs)
+
+    elif provider == LLMProvider.CLAUDE_PROXY:
+        # Route through a local CLIProxyAPI instance that wraps the user's
+        # Claude Pro/Max subscription OAuth as an Anthropic-compatible HTTP
+        # endpoint. Tool calling works end-to-end via ChatAnthropic.bind_tools.
+        try:
+            from langchain_anthropic import ChatAnthropic
+        except ImportError:
+            raise ImportError("Install langchain-anthropic: pip install langchain-anthropic")
+
+        _patch_langchain_anthropic_for_proxy()
+
+        base_url = (
+            kwargs.get("base_url")
+            or os.getenv("CLAUDE_PROXY_BASE_URL")
+            or "http://127.0.0.1:8317"
+        )
+        api_key = (
+            kwargs.get("api_key")
+            or os.getenv("CLAUDE_PROXY_API_KEY")
+            or "ranger-local-key"
+        )
+
+        model_aliases = {
+            "opus": "claude-opus-4-20250514",
+            "sonnet": "claude-sonnet-4-6",
+            "sonnet-4.6": "claude-sonnet-4-6",
+            "sonnet-4.5": "claude-sonnet-4-5-20250929",
+            "sonnet-4": "claude-sonnet-4-20250514",
+            "haiku": "claude-haiku-4-5-20251001",
+            "haiku-4.5": "claude-haiku-4-5-20251001",
+        }
+        resolved_model = model_aliases.get(
+            (model_name or "sonnet-4.6").lower(),
+            model_name or "claude-sonnet-4-6",
+        )
+
+        return ChatAnthropic(
+            model=resolved_model,
+            temperature=temperature,
+            api_key=api_key,
+            base_url=base_url,
+            streaming=streaming,
+            **{k: v for k, v in kwargs.items() if k not in ["api_key", "base_url"]},
+        )
 
     else:
         raise ValueError(f"Unknown provider: {provider}")
