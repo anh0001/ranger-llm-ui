@@ -25,6 +25,7 @@ pyinputplus
 # Optional: Alternative LLM providers
 # langchain-anthropic>=0.1.0
 # litellm>=1.0.0
+# langchain-claude-code>=0.1.0  # Claude Pro/Max subscription via OAuth (Python 3.11+, requires `npm install -g @anthropic-ai/claude-code`)
 
 # Development dependencies
 pytest>=7.0.0

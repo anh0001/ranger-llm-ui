@@ -47,11 +47,58 @@ from ranger_llm_ui.utils.logger import get_command_logger
 logger = logging.getLogger(__name__)
 
 
+_CLAUDE_CODE_SDK_PATCHED = False
+
+
+def _patch_claude_code_sdk_parser():
+    """
+    Monkey-patch claude_code_sdk message parser to swallow unknown but
+    informational frames (e.g. `rate_limit_event`) that the SDK version
+    pinned here doesn't recognize. Without this, a benign rate-limit
+    notification raises MessageParseError and aborts the chat turn.
+    Upstream issue: claude-code-sdk has no case for `rate_limit_event`.
+    """
+    global _CLAUDE_CODE_SDK_PATCHED
+    if _CLAUDE_CODE_SDK_PATCHED:
+        return
+    try:
+        from claude_code_sdk._internal import message_parser as _mp
+        from claude_code_sdk.types import SystemMessage
+        from claude_code_sdk._errors import MessageParseError
+    except ImportError:
+        return
+
+    _original_parse = _mp.parse_message
+    # Message types known to be benign informational frames that older SDK
+    # versions don't model. Coerce to a SystemMessage instead of raising.
+    _ignorable_types = {"rate_limit_event"}
+
+    def _patched(data):
+        try:
+            return _original_parse(data)
+        except MessageParseError:
+            if isinstance(data, dict) and data.get("type") in _ignorable_types:
+                logger.debug(f"Coerced ignorable frame to SystemMessage: {data.get('type')}")
+                return SystemMessage(subtype=data["type"], data=data)
+            raise
+
+    _mp.parse_message = _patched
+    # Also patch the symbol re-exported into the client module.
+    try:
+        from claude_code_sdk._internal import client as _client
+        _client.parse_message = _patched
+    except ImportError:
+        pass
+    _CLAUDE_CODE_SDK_PATCHED = True
+    logger.info("Patched claude_code_sdk.parse_message to ignore rate_limit_event frames")
+
+
 class LLMProvider(str, Enum):
     """Supported LLM providers."""
     OPENAI = "openai"
     OLLAMA = "ollama"
     ANTHROPIC = "anthropic"
+    CLAUDE_CODE = "claude_code"
 
 
 def create_llm(
@@ -122,6 +169,53 @@ def create_llm(
             api_key=api_key,
             **{k: v for k, v in kwargs.items() if k not in ["api_key"]},
         )
+
+    elif provider == LLMProvider.CLAUDE_CODE:
+        try:
+            from langchain_claude_code import ChatClaudeCode
+        except ImportError:
+            raise ImportError(
+                "Install langchain-claude-code-cli: pip install langchain-claude-code-cli. "
+                "Also requires Claude Code CLI: npm install -g @anthropic-ai/claude-code"
+            )
+
+        _patch_claude_code_sdk_parser()
+
+        # Auth resolution (in order of precedence):
+        # 1. CLAUDE_CODE_OAUTH_TOKEN env var (read by claude-code-sdk subprocess)
+        # 2. Active `claude login` session (CLI uses its stored credentials)
+        # 3. ANTHROPIC_API_KEY env var (pay-per-token billing)
+        api_key = kwargs.get("api_key") or os.getenv("ANTHROPIC_API_KEY")
+
+        # Short aliases → full model IDs (langchain_claude_code expects full names)
+        model_aliases = {
+            "opus": "claude-opus-4-7",
+            "opus-4.7": "claude-opus-4-7",
+            "sonnet": "claude-sonnet-4-6",
+            "sonnet-4.6": "claude-sonnet-4-6",
+            "sonnet-4": "claude-sonnet-4-20250514",
+            "haiku": "claude-haiku-4-5-20251001",
+            "haiku-4.5": "claude-haiku-4-5-20251001",
+        }
+        resolved_model = model_aliases.get(
+            (model_name or "sonnet-4.6").lower(),
+            model_name or "claude-sonnet-4-6",
+        )
+
+        chat_kwargs = {
+            "model": resolved_model,
+            "streaming": streaming,
+        }
+        if temperature is not None:
+            chat_kwargs["temperature"] = temperature
+        if api_key:
+            chat_kwargs["api_key"] = api_key
+
+        chat_kwargs.update({
+            k: v for k, v in kwargs.items() if k not in ["api_key", "oauth_token"]
+        })
+
+        return ChatClaudeCode(**chat_kwargs)
 
     else:
         raise ValueError(f"Unknown provider: {provider}")

@@ -3,7 +3,7 @@
 
 # LLM Configuration
 llm:
-  # Provider: openai, ollama, or anthropic
+  # Provider: openai, ollama, anthropic, or claude_code
   provider: openai
 
   # Model name (leave empty for provider default)
@@ -11,6 +11,7 @@ llm:
   #   OpenAI: gpt-4o-mini, gpt-4o, gpt-4.1-mini
   #   Ollama: llama2, codellama, mistral
   #   Anthropic: claude-3-sonnet-20240229
+  #   Claude Code (subscription via OAuth): opus, sonnet, haiku
   model: ""
 
   # Temperature for LLM generation (0.0 = deterministic, 1.0 = creative)

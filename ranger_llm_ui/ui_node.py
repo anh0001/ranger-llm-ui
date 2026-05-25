@@ -192,6 +192,12 @@ class RangerUINode:
             return "Switched to **Debug mode** (ROSA base prompts only, no Ranger persona)"
         return "Switched to **Running mode** (Ranger + ROSA prompts active)"
 
+    def set_model(self, model_choice: str) -> str:
+        """Switch model and reinitialize the agent."""
+        self.model_name = model_choice or None
+        self.initialize_agent()
+        return f"Model switched to **{self.model_name or 'provider default'}** (provider: {self.llm_provider})"
+
     def emergency_stop(self) -> str:
         """Execute emergency stop."""
         ros = get_ros_interface()
@@ -461,6 +467,29 @@ class RangerUINode:
                             - **Server Port:** {self.server_port}
                             """)
 
+                    gr.Markdown("### Model Selection")
+                    with gr.Row():
+                        with gr.Column():
+                            gr.Markdown(
+                                "Choose Claude model. Applies on selection (re-initializes agent). "
+                                "Only relevant when provider is `claude_code` or `anthropic`."
+                            )
+                            model_choices = [
+                                "sonnet-4.6",
+                                "opus-4.7",
+                                "haiku-4.5",
+                                "sonnet-4",
+                            ]
+                            default_model = self.model_name if self.model_name in model_choices else "sonnet-4.6"
+                            model_dropdown = gr.Dropdown(
+                                choices=model_choices,
+                                value=default_model,
+                                label="Claude Model",
+                                interactive=True,
+                                allow_custom_value=True,
+                            )
+                            model_status = gr.Markdown("")
+
                     gr.Markdown("### Agent Mode")
                     with gr.Row():
                         with gr.Column():
@@ -487,8 +516,9 @@ class RangerUINode:
 
                             **Environment Variables:**
                             You can configure the following via environment variables:
-                            - `LLM_PROVIDER`: openai, ollama, or anthropic
-                            - `LLM_MODEL`: Model name
+                            - `LLM_PROVIDER`: openai, ollama, anthropic, or claude_code
+                            - `LLM_MODEL`: Model name (claude_code defaults: sonnet-4.6; also opus-4.7, haiku-4.5, sonnet-4)
+                            - `CLAUDE_CODE_OAUTH_TOKEN`: OAuth token for Claude Pro/Max subscription
                             - `GRADIO_PORT`: Server port (default: 7860)
                             - `SHOW_LLM_USAGE`: Show token usage (true/false)
 
@@ -498,6 +528,13 @@ class RangerUINode:
                             - `CAMERA_IMAGE_QUALITY`: JPEG quality (default: 75)
                             - `CAMERA_IMAGE_FORMAT`: jpeg or png (default: jpeg)
                             """)
+
+            # Event handler for model selection
+            model_dropdown.change(
+                fn=self.set_model,
+                inputs=[model_dropdown],
+                outputs=[model_status],
+            )
 
             # Event handler for debug/running mode toggle
             debug_toggle.change(
@@ -682,7 +719,7 @@ def main():
         "--provider",
         type=str,
         default=os.getenv("LLM_PROVIDER", "openai"),
-        choices=["openai", "ollama", "anthropic"],
+        choices=["openai", "ollama", "anthropic", "claude_code"],
         help="LLM provider (default: openai)",
     )
     parser.add_argument(
