@@ -44,7 +44,7 @@
             "command": "bash",
             "args": [
                 "-c",
-                "set -a && source .env && set +a && export PYTHONUSERBASE=\"/home/robofi/.local/ranger_llm_ui_py310\" && export PYTHONPATH=\"/home/robofi/.local/ranger_llm_ui_py310/lib/python3.10/site-packages:$PYTHONPATH\" && source ./install/setup.bash && ros2 launch ranger_llm_ui ranger_llm_ui.launch.py"
+                "set -a && source .env && set +a && export PYTHONUSERBASE=\"/home/robofi/.local/ranger_llm_ui_py310\" && export PYTHONPATH=\"/home/robofi/.local/ranger_llm_ui_py310/lib/python3.10/site-packages:$PYTHONPATH\" && export LD_LIBRARY_PATH=\"$PYTHONUSERBASE/lib/python3.10/site-packages/nvidia/cu12/lib:$LD_LIBRARY_PATH\" && source ./install/setup.bash && ros2 launch ranger_llm_ui ranger_llm_ui.launch.py"
             ],
             "group": "none",
             "dependsOn": "Build with colcon",
@@ -58,7 +58,7 @@
             "command": "bash",
             "args": [
                 "-c",
-                "cd ${env:HOME}/tools/cliproxyapi && pkill -f '\\./cli-proxy-api' 2>/dev/null; sleep 1; ./cli-proxy-api -config config.yaml 2>&1 | tee /tmp/cliproxy.log"
+                "cd ${env:HOME}/tools/cliproxyapi && pkill -x cli-proxy-api 2>/dev/null; sleep 1; ./cli-proxy-api -config config.yaml 2>&1 | tee /tmp/cliproxy.log"
             ],
             "group": "none",
             "isBackground": true,
@@ -76,7 +76,7 @@
             "command": "bash",
             "args": [
                 "-c",
-                "set -a && source .env && set +a && export PYTHONUSERBASE=\"/home/robofi/.local/ranger_llm_ui_py310\" && export PYTHONPATH=\"/home/robofi/.local/ranger_llm_ui_py310/lib/python3.10/site-packages:$PYTHONPATH\" && export LLM_PROVIDER=claude_proxy && export LLM_MODEL=${LLM_MODEL:-sonnet-4.6} && python -m ranger_llm_ui.ui_node --provider claude_proxy --model ${LLM_MODEL:-sonnet-4.6}"
+                "set -a && source .env && set +a && export PYTHONUSERBASE=\"/home/robofi/.local/ranger_llm_ui_py310\" && export PYTHONPATH=\"/home/robofi/.local/ranger_llm_ui_py310/lib/python3.10/site-packages:$PYTHONPATH\" && export LD_LIBRARY_PATH=\"$PYTHONUSERBASE/lib/python3.10/site-packages/nvidia/cu12/lib:$LD_LIBRARY_PATH\" && export LLM_PROVIDER=claude_proxy && export LLM_MODEL=${LLM_MODEL:-sonnet-4.6} && python -m ranger_llm_ui.ui_node --provider claude_proxy --model ${LLM_MODEL:-sonnet-4.6}"
             ],
             "group": "none",
             "isBackground": true,

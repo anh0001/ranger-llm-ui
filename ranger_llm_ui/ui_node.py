@@ -31,6 +31,7 @@ from ranger_llm_ui.tools.movement_tools import get_ros_interface
 from ranger_llm_ui.tools.status_tools import get_status_interface
 from ranger_llm_ui.tools.camera_tools import get_camera_interface
 from ranger_llm_ui.utils.logger import setup_logging, get_command_logger
+from ranger_llm_ui.voice import get_transcriber, get_synthesizer, voice_status
 
 # Load environment variables from .env file
 load_dotenv()
@@ -263,7 +264,9 @@ class RangerUINode:
                 while elapsed_time < max_timeout:
                     try:
                         result = future.result(timeout=1)  # Check every 1 second
-                        output = result.get("output", "I couldn't process that request.")
+                        output = self._content_to_text(
+                            result.get("output", "I couldn't process that request.")
+                        )
                         break
                     except concurrent.futures.TimeoutError:
                         elapsed_time += 1
@@ -311,6 +314,46 @@ class RangerUINode:
             logger.error(f"Chat error: {e}")
             history[-1]["content"] = f"Error: {str(e)}"
             yield history
+
+    def transcribe_audio(self, audio_path: Optional[str]) -> str:
+        """Transcribe recorded mic audio to text for the command box."""
+        if not audio_path:
+            return ""
+        text = get_transcriber().transcribe(audio_path)
+        logger.info("Voice command transcribed: %r", text)
+        return text
+
+    @staticmethod
+    def _content_to_text(content) -> str:
+        """Flatten chat content to plain text.
+
+        claude_proxy / Anthropic responses may arrive as a list of content
+        blocks (e.g. [{"type": "text", "text": "..."}]) rather than a plain
+        string, so coerce any shape into speakable text.
+        """
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = []
+            for block in content:
+                if isinstance(block, dict):
+                    parts.append(block.get("text") or block.get("content") or "")
+                else:
+                    parts.append(str(block))
+            return " ".join(p for p in parts if p)
+        if isinstance(content, dict):
+            return content.get("text") or content.get("content") or ""
+        return str(content) if content is not None else ""
+
+    def synthesize_response(self, history: list[dict], enabled: bool):
+        """Speak the latest assistant reply when voice output is enabled."""
+        if not enabled or not history:
+            return None
+        last = history[-1]
+        if not isinstance(last, dict) or last.get("role") != "assistant":
+            return None
+        text = self._content_to_text(last.get("content", ""))
+        return get_synthesizer().synthesize(text)
 
     def teleop_forward(self, distance: float = 0.5) -> str:
         """Manual forward movement."""
@@ -391,6 +434,26 @@ class RangerUINode:
                         )
                         submit_btn = gr.Button("Send", variant="primary", scale=1)
                         stop_chat_btn = gr.Button("Stop", variant="stop", scale=1, visible=False)
+
+                    # Voice input: record mic -> speech-to-text -> command box
+                    with gr.Row():
+                        mic_in = gr.Audio(
+                            sources=["microphone"],
+                            type="filepath",
+                            label="Voice command (record, then it sends automatically)",
+                            scale=4,
+                        )
+                        speak_toggle = gr.Checkbox(
+                            value=True,
+                            label="Speak replies",
+                            scale=1,
+                        )
+                    # Text-to-speech output for the assistant reply
+                    tts_audio = gr.Audio(
+                        label="Voice reply",
+                        autoplay=True,
+                        interactive=False,
+                    )
 
                     with gr.Row():
                         clear_btn = gr.Button("Clear Chat")
@@ -505,6 +568,31 @@ class RangerUINode:
                             )
                             mode_status = gr.Markdown("")
 
+                    gr.Markdown("### Voice (Speech-to-Text / Text-to-Speech)")
+                    with gr.Row():
+                        with gr.Column():
+                            gr.Markdown(
+                                "Local, offline voice via **faster-whisper** (STT) "
+                                "and **Piper** (TTS). No cloud API key needed. "
+                                "Record with the mic on the Home tab; toggle "
+                                "**Speak replies** to hear responses.\n\n"
+                                "**Environment Variables:**\n"
+                                "- `WHISPER_MODEL`: STT model (default: small.en; also base.en, medium.en)\n"
+                                "- `WHISPER_DEVICE`: auto, cuda, or cpu (default: auto)\n"
+                                "- `PIPER_VOICE`: TTS voice (default: en_US-lessac-medium)\n"
+                                "- `PIPER_VOICE_PATH`: path to a local .onnx voice (skips download)\n"
+                                "- `PIPER_DOWNLOAD`: allow voice auto-download (default: enabled)"
+                            )
+                            voice_status_box = gr.Textbox(
+                                label="Voice Backend Status",
+                                value="Click 'Check Voice Backends' to load models",
+                                interactive=False,
+                                lines=2,
+                            )
+                            voice_status_btn = gr.Button(
+                                "Check Voice Backends", size="sm"
+                            )
+
                     gr.Markdown("### Gradio Settings")
 
                     with gr.Row():
@@ -536,6 +624,12 @@ class RangerUINode:
                 outputs=[model_status],
             )
 
+            # Event handler for voice backend status check
+            voice_status_btn.click(
+                fn=voice_status,
+                outputs=[voice_status_box],
+            )
+
             # Event handler for debug/running mode toggle
             debug_toggle.change(
                 fn=lambda choice: self.set_debug_mode(choice == "Debug"),
@@ -560,6 +654,10 @@ class RangerUINode:
                 fn=lambda: (gr.update(visible=True), gr.update(visible=False)),
                 inputs=None,
                 outputs=[submit_btn, stop_chat_btn],
+            ).then(
+                fn=self.synthesize_response,
+                inputs=[chatbot, speak_toggle],
+                outputs=[tts_audio],
             )
 
             # When Enter is pressed: hide Send, show Stop, run chat
@@ -578,6 +676,36 @@ class RangerUINode:
                 fn=lambda: (gr.update(visible=True), gr.update(visible=False)),
                 inputs=None,
                 outputs=[submit_btn, stop_chat_btn],
+            ).then(
+                fn=self.synthesize_response,
+                inputs=[chatbot, speak_toggle],
+                outputs=[tts_audio],
+            )
+
+            # When mic recording stops: transcribe -> fill command box -> send
+            mic_event = mic_in.stop_recording(
+                fn=self.transcribe_audio,
+                inputs=[mic_in],
+                outputs=[msg],
+            ).then(
+                fn=lambda: (gr.update(visible=False), gr.update(visible=True)),
+                inputs=None,
+                outputs=[submit_btn, stop_chat_btn],
+            ).then(
+                fn=self.chat_response,
+                inputs=[msg, chatbot],
+                outputs=[chatbot],
+            ).then(
+                fn=lambda: "",
+                outputs=[msg],
+            ).then(
+                fn=lambda: (gr.update(visible=True), gr.update(visible=False)),
+                inputs=None,
+                outputs=[submit_btn, stop_chat_btn],
+            ).then(
+                fn=self.synthesize_response,
+                inputs=[chatbot, speak_toggle],
+                outputs=[tts_audio],
             )
 
             # When Stop is clicked: cancel chat, restore Send button
@@ -585,7 +713,7 @@ class RangerUINode:
                 fn=self.cancel_chat,
                 inputs=None,
                 outputs=[submit_btn, stop_chat_btn],
-                cancels=[submit_event, msg_event],
+                cancels=[submit_event, msg_event, mic_event],
             )
 
             clear_btn.click(
@@ -597,7 +725,7 @@ class RangerUINode:
             stop_btn.click(
                 fn=self.emergency_stop,
                 outputs=[],
-                cancels=[submit_event, msg_event],  # Cancel ongoing chat
+                cancels=[submit_event, msg_event, mic_event],  # Cancel ongoing chat
             )
 
             # Event handlers for Status tab

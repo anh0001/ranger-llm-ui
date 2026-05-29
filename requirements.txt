@@ -22,6 +22,31 @@ pillow>=10.4.0
 numpy>=1.26.4,<2.0.0
 pyinputplus
 
+# Voice (local, offline STT + TTS — no cloud API key required)
+# STT: faster-whisper (CTranslate2). On Jetson you may need to pin ctranslate2
+#   to match JetPack CUDA/cuDNN, e.g. ctranslate2==4.4.0 (CUDA12) or 3.24.0 (CUDA11).
+# TTS backend priority (auto): Kokoro (neural, most natural) -> Piper -> espeak-ng.
+#
+#   Kokoro (RECOMMENDED, PyTorch backend — avoids onnxruntime entirely):
+#     pip install kokoro==0.9.4 soundfile "misaki[en]"
+#     Needs torch. On Jetson/JetPack 6 use the Jetson wheel, NOT generic PyPI:
+#       pip install torch --index-url https://pypi.jetson-ai-lab.io/jp6/cu126
+#     That torch links libcudss.so.0:  pip install --no-deps nvidia-cudss-cu12
+#     and the launch env must expose it (the VS Code tasks set LD_LIBRARY_PATH to
+#     <PYTHONUSERBASE>/lib/python3.10/site-packages/nvidia/cu12/lib).
+#     Default voice: af_heart (set KOKORO_VOICE to change, e.g. af_bella).
+#
+#   espeak-ng (guaranteed fallback, robotic):  sudo apt install espeak-ng
+#
+#   Piper: only works where onnxruntime is healthy. The stock PyPI onnxruntime
+#     aarch64 wheel ABORTS on import on Tegra CPUs, so piper-tts is gated behind
+#     a subprocess health probe and skipped on Jetson.
+faster-whisper>=1.0.0
+soundfile>=0.12.1
+# kokoro==0.9.4        # neural TTS (install per notes above)
+# misaki[en]           # kokoro G2P
+# piper-tts>=1.2.0     # optional; needs a working onnxruntime for the platform
+
 # Optional: Alternative LLM providers
 # langchain-anthropic>=0.1.0
 # litellm>=1.0.0
