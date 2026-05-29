@@ -11,6 +11,10 @@ Configuration (environment variables):
     WHISPER_DEVICE     "cuda", "cpu", or "auto" (default: "auto")
     WHISPER_COMPUTE    compute type override (default: device-dependent)
     WHISPER_LANGUAGE   transcription language hint (default: "en")
+    WHISPER_VAD        "1"/"true" to enable Silero VAD filtering (default: off).
+                       VAD pulls in onnxruntime, which hard-aborts on Jetson
+                       Tegra CPUs, so it is OFF by default. Transcription itself
+                       uses CTranslate2 and does not need onnxruntime.
 """
 
 import logging
@@ -36,6 +40,10 @@ class Transcriber:
         self.device = os.getenv("WHISPER_DEVICE", "auto").lower()
         self.compute_type = os.getenv("WHISPER_COMPUTE", "").strip() or None
         self.language = os.getenv("WHISPER_LANGUAGE", "en").strip() or None
+        # VAD off by default: Silero VAD needs onnxruntime, which aborts on Tegra.
+        self.vad_filter = os.getenv("WHISPER_VAD", "").lower() in {
+            "1", "true", "yes", "on"
+        }
 
     # -- internals ---------------------------------------------------------
 
@@ -136,7 +144,7 @@ class Transcriber:
             segments, _info = self._model.transcribe(
                 audio_path,
                 language=self.language,
-                vad_filter=True,
+                vad_filter=self.vad_filter,
                 beam_size=1,
                 condition_on_previous_text=False,
             )

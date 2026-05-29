@@ -41,7 +41,14 @@ pyinputplus
 #   Piper: only works where onnxruntime is healthy. The stock PyPI onnxruntime
 #     aarch64 wheel ABORTS on import on Tegra CPUs, so piper-tts is gated behind
 #     a subprocess health probe and skipped on Jetson.
+# STT: faster-whisper (CTranslate2 — no onnxruntime for transcription).
+#   pip install faster-whisper av     # 'av'/PyAV is required for audio decode
+#   On Jetson, ctranslate2 runs CPU int8 (cuda needs matching cuDNN); the
+#   transcriber auto-falls-back to CPU. Default model base.en (set WHISPER_MODEL).
+#   VAD is OFF by default (WHISPER_VAD=1 to enable) because Silero VAD pulls in
+#   onnxruntime, which aborts on Tegra.
 faster-whisper>=1.0.0
+av>=10.0.0
 soundfile>=0.12.1
 # kokoro==0.9.4        # neural TTS (install per notes above)
 # misaki[en]           # kokoro G2P

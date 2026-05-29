@@ -217,6 +217,13 @@ class Synthesizer:
             self._error = f"kokoro unavailable: {e}"
             return False
         try:
+            # Cap torch CPU threads so synthesis doesn't starve the agent /
+            # web loop on the Jetson's limited cores (avoids chat timeouts).
+            try:
+                import torch
+                torch.set_num_threads(int(os.getenv("KOKORO_THREADS", "4")))
+            except Exception:
+                pass
             self._kokoro = KPipeline(lang_code=self.kokoro_lang)
             self._backend = "kokoro"
             logger.info("Kokoro TTS ready: voice=%s lang=%s",
