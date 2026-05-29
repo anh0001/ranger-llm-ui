@@ -448,7 +448,7 @@ Anh Nguyen - anh0001@example.com
 **Codebase Version:** 0.1.0
 <!-- ARIS:BEGIN -->
 ## ARIS Skill Scope
-ARIS skills installed in this project: 77 entries.
+ARIS skills installed in this project: 78 entries.
 Manifest: `.aris/installed-skills.txt` (lists every skill ARIS installed and its upstream target).
 For ARIS workflows, prefer the project-local skills under `.claude/skills/` over global skills.
 Do not modify or delete files inside any skill that is a symlink (symlinks point into `/home/robofi/codes/Auto-claude-code-research-in-sleep`).
