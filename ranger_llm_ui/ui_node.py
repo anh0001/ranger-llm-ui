@@ -809,8 +809,12 @@ class RangerUINode:
                 api_open=True,  # Enable API access
             )
 
+            # Bind address is configurable. For the Tailscale Serve HTTPS path
+            # (needed so the browser mic works over the tailnet), set
+            # GRADIO_SERVER_NAME=127.0.0.1 and front it with `tailscale serve`.
+            server_name = os.getenv("GRADIO_SERVER_NAME", "0.0.0.0")
             demo.launch(
-                server_name="0.0.0.0",
+                server_name=server_name,
                 server_port=self.server_port,
                 share=self.share,
                 show_error=True,
