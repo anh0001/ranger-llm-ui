@@ -22,6 +22,7 @@ from ranger_llm_ui.tools.movement_tools import (
     MoveBackwardTool,
     TurnAngleTool,
     StopRobotTool,
+    NavigateToPoseTool,
     get_movement_tools,
     initialize_ros_interface,
 )
@@ -47,7 +48,7 @@ logger = logging.getLogger(__name__)
 TOOL_CATEGORIES = {
     "movement": {
         "description": "Tools for controlling robot movement",
-        "tools": ["MoveForward", "MoveBackward", "TurnAngle", "StopRobot"],
+        "tools": ["MoveForward", "MoveBackward", "TurnAngle", "StopRobot", "NavigateToPose"],
     },
     "status": {
         "description": "Tools for querying robot and system status",
@@ -89,6 +90,7 @@ def get_all_tools(
             MoveBackwardTool(),
             TurnAngleTool(),
             StopRobotTool(),
+            NavigateToPoseTool(),
         ])
 
     if include_status:

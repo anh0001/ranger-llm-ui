@@ -386,14 +386,36 @@ class StopRobotInput(BaseModel):
     )
 
 
+class NavigateToPoseInput(BaseModel):
+    """Input schema for NavigateToPose tool."""
+    x: float = Field(
+        description="Target X position in odom frame (meters)"
+    )
+    y: float = Field(
+        description="Target Y position in odom frame (meters)"
+    )
+    yaw_deg: Optional[float] = Field(
+        default=None,
+        description=(
+            "Optional final heading in degrees (odom frame, 0=+X, 90=+Y, "
+            "CCW positive). If omitted, final heading is left as-is after "
+            "translation."
+        ),
+        ge=-360,
+        le=360,
+    )
+
+
 class MoveForwardTool(BaseTool):
     """Tool to move the robot forward by a specified distance."""
 
     name: str = "MoveForward"
     description: str = (
-        "Move the robot forward by a specified distance in meters. "
-        "Uses closed-loop odometry control for accurate movement. "
-        "Input should be the distance in meters (0.1 to 5.0)."
+        "LOW-LEVEL PRIMITIVE. Move the robot forward by a specified distance "
+        "in meters along its current heading. Use ONLY for explicit relative "
+        "commands like 'go forward 2 m'. For ANY absolute-position goal "
+        "('go to (x,y)', 'return to origin'), use NavigateToPose instead. "
+        "Input: distance in meters (0.1 to 5.0)."
     )
     args_schema: Type[BaseModel] = MoveForwardInput
     return_direct: bool = False
@@ -488,9 +510,10 @@ class MoveBackwardTool(BaseTool):
 
     name: str = "MoveBackward"
     description: str = (
-        "Move the robot backward by a specified distance in meters. "
-        "Uses closed-loop odometry control for accurate movement. "
-        "Input should be the distance in meters (0.1 to 5.0)."
+        "LOW-LEVEL PRIMITIVE. Move the robot backward by a specified distance "
+        "in meters. Use ONLY for explicit relative commands like 'back up 1 m'. "
+        "For 'return to origin' or any absolute goal, use NavigateToPose. "
+        "Input: distance in meters (0.1 to 5.0)."
     )
     args_schema: Type[BaseModel] = MoveBackwardInput
     return_direct: bool = False
@@ -574,11 +597,11 @@ class TurnAngleTool(BaseTool):
 
     name: str = "TurnAngle"
     description: str = (
-        "Rotate the robot in place by a specified angle in degrees. "
-        "Positive angle = turn right/clockwise. "
-        "Negative angle = turn left/counterclockwise. "
-        "Uses closed-loop odometry control for accurate rotation. "
-        "Input should be the angle in degrees (-360 to 360)."
+        "LOW-LEVEL PRIMITIVE. Rotate in place by a specified angle in degrees. "
+        "Positive=clockwise/right, negative=CCW/left. Use ONLY for explicit "
+        "relative commands like 'turn left 90°'. For reaching an absolute "
+        "(x,y,yaw) pose, use NavigateToPose instead — do NOT chain TurnAngle "
+        "with MoveForward to compute absolute goals. Input: -360 to 360."
     )
     args_schema: Type[BaseModel] = TurnAngleInput
     return_direct: bool = False
@@ -713,6 +736,174 @@ class StopRobotTool(BaseTool):
         return result
 
 
+class NavigateToPoseTool(BaseTool):
+    """
+    Drive to an absolute (x, y, optional yaw) pose in the odom frame.
+
+    Strategy (deterministic, no LLM math):
+      1. Read current odom (x0, y0, yaw0).
+      2. Rotate to face target: turn_deg = normalize(atan2(dy, dx) - yaw0).
+      3. Drive forward hypot(dx, dy).
+      4. If yaw_deg given: re-read odom, rotate to final yaw.
+
+    Uses MoveForward, TurnAngle action paths via the same action server.
+    """
+
+    name: str = "NavigateToPose"
+    description: str = (
+        "PRIMARY NAVIGATION TOOL. Drive to an absolute pose (x, y, optional "
+        "yaw_deg) in the odom frame. Reads current odometry and executes "
+        "turn -> drive -> turn with correct geometry — handles non-origin "
+        "start poses, return-to-origin, and arbitrary world-frame goals. "
+        "USE THIS BY DEFAULT for any navigation request unless the operator "
+        "explicitly asks for a relative move in robot frame (e.g. 'forward "
+        "2 m'). Inputs: x (m), y (m), yaw_deg (optional; math convention: "
+        "0=+X, 90=+Y, CCW positive). Examples: 'go to (3,0.5)' -> x=3,y=0.5; "
+        "'return to origin' -> x=0,y=0,yaw_deg=0; 'come back here' -> use "
+        "saved start pose."
+    )
+    args_schema: Type[BaseModel] = NavigateToPoseInput
+    return_direct: bool = False
+
+    safety_guard: SafetyGuard = Field(default_factory=get_safety_guard)
+
+    class Config:
+        arbitrary_types_allowed = True
+
+    @staticmethod
+    def _normalize_deg(angle_deg: float) -> float:
+        a = (angle_deg + 180.0) % 360.0 - 180.0
+        if a == -180.0:
+            a = 180.0
+        return a
+
+    def _do_turn(self, ros, turn_deg: float) -> tuple[bool, str]:
+        """Execute one rotation using the action client. Clockwise positive."""
+        turn_deg = self._normalize_deg(turn_deg)
+        if abs(turn_deg) < 1.0:
+            return True, f"skip turn ({turn_deg:.1f}°)"
+        is_safe, msg, params = self.safety_guard.check_command_safety(
+            "turn", angle_deg=turn_deg
+        )
+        if not is_safe:
+            return False, f"safety: {msg}"
+        angle = params.get("angle_deg", turn_deg)
+        ang_vel = params.get("angular_velocity_dps", 30.0)
+        # TurnAngle convention: positive=clockwise. In math frame CCW is positive,
+        # so to apply a CCW turn we pass negative angle_deg to rotate_angle.
+        # rotate_angle's direction: direction = -1.0 if angle_deg > 0 else 1.0
+        # (publishes angular.z = direction * vel). ROS angular.z>0 = CCW.
+        # So angle_deg<0 -> direction=+1 -> angular.z>0 -> CCW. Good.
+        # Math-frame CCW turn_deg>0 => pass -turn_deg to action.
+        result = ros.rotate_angle(
+            angle_deg=-angle,
+            max_angular_velocity_dps=ang_vel,
+        )
+        return True, result
+
+    def _do_drive(self, ros, distance_m: float) -> tuple[bool, str]:
+        if distance_m < 0.01:
+            return True, f"skip drive ({distance_m:.3f} m)"
+        is_safe, msg, params = self.safety_guard.check_command_safety(
+            "move", distance_m=distance_m
+        )
+        if not is_safe:
+            return False, f"safety: {msg}"
+        d = params.get("distance_m", distance_m)
+        v = params.get("velocity_mps", 0.2)
+        result = ros.drive_distance(distance_m=d, max_velocity_mps=v)
+        return True, result
+
+    def _run(
+        self,
+        x: float,
+        y: float,
+        yaw_deg: Optional[float] = None,
+        run_manager: Optional[CallbackManagerForToolRun] = None,
+    ) -> str:
+        start_time = time.time()
+        ros = get_ros_interface()
+
+        if ros.simulation_mode:
+            logger.info(f"[SIM] NavigateToPose -> ({x:.2f}, {y:.2f}, {yaw_deg})")
+            log_tool_call(
+                tool_name=self.name,
+                parameters={"x": x, "y": y, "yaw_deg": yaw_deg},
+                result="simulated",
+                success=True,
+                execution_time_ms=(time.time() - start_time) * 1000,
+            )
+            return f"Navigated to ({x:.2f}, {y:.2f}, yaw={yaw_deg}) (simulated)"
+
+        pose = ros.get_current_position()
+        if pose is None:
+            err = "Error: no odometry available; cannot plan navigation."
+            log_tool_call(
+                tool_name=self.name,
+                parameters={"x": x, "y": y, "yaw_deg": yaw_deg},
+                result=err, success=False, error="no odom",
+                execution_time_ms=(time.time() - start_time) * 1000,
+            )
+            return err
+
+        x0, y0, yaw0_rad = pose
+        yaw0_deg = math.degrees(yaw0_rad)
+        dx = x - x0
+        dy = y - y0
+        distance = math.hypot(dx, dy)
+
+        steps: list[str] = [
+            f"start pose: ({x0:.2f}, {y0:.2f}, yaw={yaw0_deg:.1f}°)",
+            f"target: ({x:.2f}, {y:.2f}, yaw={yaw_deg})",
+        ]
+
+        # Step 1: turn to face target (skip if already on-spot)
+        if distance >= 0.05:
+            bearing_deg = math.degrees(math.atan2(dy, dx))
+            turn1 = self._normalize_deg(bearing_deg - yaw0_deg)
+            ok, msg = self._do_turn(ros, turn1)
+            steps.append(f"turn1 {turn1:.1f}°: {msg}")
+            if not ok:
+                return "; ".join(steps)
+
+            # Step 2: drive
+            ok, msg = self._do_drive(ros, distance)
+            steps.append(f"drive {distance:.2f}m: {msg}")
+            if not ok:
+                return "; ".join(steps)
+        else:
+            steps.append(f"already at target ({distance:.3f} m)")
+
+        # Step 3: final yaw alignment, if requested
+        if yaw_deg is not None:
+            pose2 = ros.get_current_position()
+            if pose2 is None:
+                steps.append("final-yaw skipped: no odom")
+            else:
+                _, _, yaw_now_rad = pose2
+                yaw_now_deg = math.degrees(yaw_now_rad)
+                turn2 = self._normalize_deg(yaw_deg - yaw_now_deg)
+                ok, msg = self._do_turn(ros, turn2)
+                steps.append(f"turn2 {turn2:.1f}°: {msg}")
+
+        # Report final pose
+        final = ros.get_current_position()
+        if final is not None:
+            fx, fy, fyaw_rad = final
+            steps.append(
+                f"final pose: ({fx:.2f}, {fy:.2f}, yaw={math.degrees(fyaw_rad):.1f}°)"
+            )
+
+        result = "; ".join(steps)
+        log_tool_call(
+            tool_name=self.name,
+            parameters={"x": x, "y": y, "yaw_deg": yaw_deg},
+            result=result, success=True,
+            execution_time_ms=(time.time() - start_time) * 1000,
+        )
+        return result
+
+
 # Convenience function to create all movement tools
 def get_movement_tools() -> list[BaseTool]:
     """Get all movement-related tools."""
@@ -721,4 +912,5 @@ def get_movement_tools() -> list[BaseTool]:
         MoveBackwardTool(),
         TurnAngleTool(),
         StopRobotTool(),
+        NavigateToPoseTool(),
     ]

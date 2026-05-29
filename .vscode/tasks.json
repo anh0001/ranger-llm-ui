@@ -58,7 +58,7 @@
             "command": "bash",
             "args": [
                 "-c",
-                "cd ${env:HOME}/tools/cliproxyapi && pkill -f cli-proxy-api 2>/dev/null; sleep 1; ./cli-proxy-api -config config.yaml"
+                "cd ${env:HOME}/tools/cliproxyapi && pkill -f '\\./cli-proxy-api' 2>/dev/null; sleep 1; ./cli-proxy-api -config config.yaml 2>&1 | tee /tmp/cliproxy.log"
             ],
             "group": "none",
             "isBackground": true,

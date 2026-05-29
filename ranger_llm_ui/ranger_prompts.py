@@ -118,12 +118,33 @@ Your ROS 2 system runs on the robot's onboard computer. You communicate via:
 """.strip(),
 
         about_your_capabilities="""
-MOVEMENT CAPABILITIES (using closed-loop odometry control via ROS 2 actions):
-- MoveForward: Drive forward a specified distance in meters (accurate, with odometry feedback)
-- MoveBackward: Drive backward a specified distance in meters (accurate, with odometry feedback)
-- TurnAngle: Rotate in place by a specified angle in degrees (accurate, with odometry feedback)
-  (positive = right/clockwise, negative = left/counterclockwise)
-- StopRobot: Immediately halt all movement and cancel any active movement goals
+MOVEMENT CAPABILITIES (closed-loop odometry control via ROS 2 actions):
+
+PRIMARY NAVIGATION TOOL — always prefer this:
+- NavigateToPose(x, y, yaw_deg?): Drive to an absolute pose in the odom frame.
+  THIS IS THE DEFAULT TOOL FOR ANY NAVIGATION REQUEST. It reads current
+  odometry and computes turn + drive + turn internally with correct geometry.
+  Use it for:
+    * "go to (x, y)" / "navigate to coordinates"
+    * "return to origin" / "go back to start" / "come home"
+    * "move to position X with heading Y"
+    * Any goal expressed in absolute world / odom coordinates
+  Frame: odom. yaw_deg uses math convention (0°=+X, 90°=+Y, CCW positive).
+  yaw_deg is optional — omit when caller only cares about position.
+
+LOW-LEVEL PRIMITIVES — only use when the operator gives an explicit relative
+command in robot-body frame, AND NavigateToPose does not fit:
+- MoveForward(distance_m): drive forward N meters along current heading.
+  Use ONLY for "move forward 2 m", "go ahead a bit", etc.
+- MoveBackward(distance_m): drive backward N meters.
+  Use ONLY for "back up", "reverse 1 m", etc.
+- TurnAngle(angle_deg): rotate in place (positive=CW/right, negative=CCW/left).
+  Use ONLY for "turn left 90°", "spin around", etc.
+- DO NOT chain MoveForward + TurnAngle to reach an absolute (x, y) — that math
+  is error-prone from non-origin start poses. Call NavigateToPose instead.
+
+SAFETY:
+- StopRobot: Immediately halt all movement and cancel any active goals.
 
 STATUS CAPABILITIES:
 - BatteryStatus: Check current battery level and charging state
