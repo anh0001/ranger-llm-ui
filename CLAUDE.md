@@ -451,6 +451,6 @@ Anh Nguyen - anh0001@example.com
 ARIS skills installed in this project: 78 entries.
 Manifest: `.aris/installed-skills.txt` (lists every skill ARIS installed and its upstream target).
 For ARIS workflows, prefer the project-local skills under `.claude/skills/` over global skills.
-Do not modify or delete files inside any skill that is a symlink (symlinks point into `/home/robofi/codes/Auto-claude-code-research-in-sleep`).
-Update with: `bash /home/robofi/codes/Auto-claude-code-research-in-sleep/tools/install_aris.sh`  (re-runnable; reconciles new/removed skills).
+Do not modify or delete files inside any skill that is a symlink (symlinks point into `/srv/data/users/anhar/codes/Auto-claude-code-research-in-sleep`).
+Update with: `bash /srv/data/users/anhar/codes/Auto-claude-code-research-in-sleep/tools/install_aris.sh`  (re-runnable; reconciles new/removed skills).
 <!-- ARIS:END -->
