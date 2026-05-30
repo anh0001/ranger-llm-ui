@@ -81,6 +81,11 @@ import langchain_ollama
 print("Gradio:", gradio.__version__)
 print("LangChain:", langchain.__version__)
 print("Core dependencies import OK")
+try:
+    import faster_whisper  # noqa: F401
+    print("Voice STT (faster-whisper) import OK")
+except Exception as e:
+    print("Voice STT unavailable (mic input disabled):", e)
 VERIFY
 
 echo -e "\n${GREEN}====================================${NC}"
@@ -100,5 +105,15 @@ Optional helper alias:
 To run the UI:
     python -m ranger_llm_ui.ui_node --simple    # Without ROS 2
     ros2 run ranger_llm_ui ui_node              # With ROS 2
+
+Voice (optional):
+  - STT (mic input) ships ready via faster-whisper (installed above).
+  - TTS (spoken replies) needs a backend, or replies are SILENT. Install one:
+        pip install --user piper-tts          # natural, recommended on x86
+        sudo apt install espeak-ng            # robotic fallback, zero deps
+        pip install --user kokoro soundfile "misaki[en]"   # most natural (Jetson)
+  - The browser mic only works over HTTPS or http://localhost (secure context),
+    NOT a plain-HTTP LAN/Tailscale IP. Use an SSH tunnel or 'tailscale serve'.
+    See the "Voice" section in README.md.
 
 EOF

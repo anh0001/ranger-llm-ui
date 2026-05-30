@@ -7,6 +7,7 @@ LLM-driven natural language operator interface for the Ranger garden robot.
 - **Natural Language Control**: Control the robot using conversational commands like "move forward 1 meter" or "turn left 90 degrees"
 - **Safety First**: Built-in safety guards with velocity limits, distance validation, and emergency stop
 - **Multiple LLM Backends**: OpenAI, Ollama (local), Anthropic API, and **Claude Pro/Max subscription via OAuth** (no API key needed)
+- **Voice I/O (optional)**: Hands-free speech-to-text mic input (faster-whisper) and spoken replies (Piper / Kokoro / espeak-ng) — fully local, no cloud key
 - **ROS 2 Integration**: Native ROS 2 Humble support via rclpy
 - **Manual Override**: Emergency stop button and manual teleop controls always available
 
@@ -102,9 +103,11 @@ which wraps Claude Code OAuth as an Anthropic-compatible HTTP endpoint.
 **1. Download CLIProxyAPI** (Go binary, prebuilt for linux/macOS):
 ```bash
 mkdir -p ~/tools/cliproxyapi && cd ~/tools/cliproxyapi
-# Pick the asset matching your OS/arch from the releases page:
+# Pick the asset matching your OS/arch from the releases page (use a current tag):
 # https://github.com/router-for-me/CLIProxyAPI/releases
-curl -sL -o p.tar.gz https://github.com/router-for-me/CLIProxyAPI/releases/download/v7.1.20/CLIProxyAPI_7.1.20_linux_aarch64.tar.gz
+VER=7.1.31
+ARCH=amd64           # x86_64 desktop/server; use 'arm64' on Jetson/aarch64
+curl -sL -o p.tar.gz "https://github.com/router-for-me/CLIProxyAPI/releases/download/v${VER}/CLIProxyAPI_${VER}_linux_${ARCH}.tar.gz"
 tar xzf p.tar.gz && rm p.tar.gz
 cp config.example.yaml config.yaml
 # Edit config.yaml to set api-keys to a single value, e.g. "ranger-local-key"
@@ -130,7 +133,9 @@ nohup ./cli-proxy-api -config config.yaml > /tmp/cliproxy.log 2>&1 &
 **4. Install the LangChain Anthropic adapter** (one-time, in your ranger env):
 ```bash
 export PYTHONUSERBASE="$HOME/.local/ranger_llm_ui_py310"
-pip install langchain-anthropic
+# IMPORTANT: pin to the 0.3.x line. The unpinned latest (1.4.x) drags
+# langchain-core up to 1.x and breaks ROSA's `langchain-core~=0.3.52` pin.
+pip install --user "langchain-anthropic~=0.3.13"
 ```
 
 **5. Run ranger-llm-ui pointing at the proxy:**
@@ -180,6 +185,68 @@ ros2 launch ranger_llm_ui ranger_llm_ui.launch.py
 
 The UI will be available at `http://localhost:7860`
 
+## Voice (Speech-to-Text & Text-to-Speech)
+
+Optional, fully local/offline voice. Tap the 🎤 mic button next to the command
+box, speak, tap stop — your speech is transcribed and sent automatically, and
+the robot's reply is spoken back. Toggle spoken replies with the **🔊 Speak
+replies** checkbox.
+
+### Speech-to-Text (STT) — works out of the box
+
+STT uses **faster-whisper** and is installed by `requirements.txt`
+(`faster-whisper`, `av`, `soundfile`). No extra step. The first transcription
+lazily loads the model.
+
+```bash
+export WHISPER_MODEL=small.en   # default base.en; also medium.en, large-v3, ...
+export WHISPER_VAD=1            # optional voice-activity trimming (pulls onnxruntime)
+```
+
+### Text-to-Speech (TTS) — install a backend, or replies are silent
+
+> **Heads-up:** no TTS backend ships enabled by default (kokoro/piper/espeak are
+> commented out in `requirements.txt`). Without one, replies have **no sound** —
+> the log shows `TTS skipped: ... not installed`. Install **one** of:
+
+```bash
+export PYTHONUSERBASE="$HOME/.local/ranger_llm_ui_py310"
+
+# Piper — natural, lightweight, recommended on x86/desktop (needs healthy onnxruntime).
+# First spoken reply auto-downloads the voice (~60 MB) to ~/.ranger_llm_ui/voices.
+pip install --user piper-tts
+
+# Kokoro — most natural (PyTorch, avoids onnxruntime). Best on Jetson. Heavier.
+pip install --user kokoro==0.9.4 soundfile "misaki[en]"
+
+# espeak-ng — robotic but rock-solid fallback, zero Python deps.
+sudo apt install espeak-ng
+```
+
+Backend auto-selection is **Kokoro → Piper → espeak-ng**. Force one with
+`TTS_BACKEND=piper|kokoro|espeak`. Voices: `PIPER_VOICE` (default
+`en_US-lessac-medium`), `KOKORO_VOICE` (default `af_heart`),
+`ESPEAK_VOICE` (default `en-us`).
+
+### Browser microphone requires a secure context (HTTPS or localhost)
+
+Browsers only grant mic access (`getUserMedia`) on a **secure origin**. Opening
+the UI over plain HTTP at a LAN/Tailscale IP (e.g. `http://10.0.0.5:7860`) will
+**never prompt for the mic**. Use one of:
+
+- **Localhost / SSH tunnel** (simplest): `ssh -L 7860:127.0.0.1:7860 user@host`
+  then open `http://localhost:7860` — `localhost` is a secure context.
+- **HTTPS via Tailscale Serve** (works from any device incl. iPhone/Safari):
+  ```bash
+  # one-time: enable "HTTPS Certificates" in the Tailscale admin console (DNS page)
+  tailscale serve --bg --https=443 http://127.0.0.1:7860
+  ```
+  then open `https://<magicdns-name>.ts.net/`. Set `GRADIO_SERVER_NAME=127.0.0.1`
+  so the UI is reachable only through the HTTPS proxy.
+
+> **iOS Safari autoplay:** spoken replies won't auto-play until you've tapped the
+> page once. Tap anywhere, then replies play automatically.
+
 ## Usage
 
 ### Example Commands
@@ -213,6 +280,11 @@ The UI provides manual teleop buttons for direct control:
 | `OPENAI_API_KEY` | OpenAI API key | - |
 | `OLLAMA_BASE_URL` | Ollama server URL | http://localhost:11434 |
 | `GRADIO_PORT` | Web UI port | 7860 |
+| `GRADIO_SERVER_NAME` | Bind address (`127.0.0.1` to expose only via an HTTPS proxy) | 0.0.0.0 |
+| `WHISPER_MODEL` | STT model (base.en, small.en, medium.en, ...) | base.en |
+| `TTS_BACKEND` | TTS engine: auto, kokoro, piper, espeak | auto |
+| `PIPER_VOICE` | Piper voice name | en_US-lessac-medium |
+| `KOKORO_VOICE` | Kokoro voice name | af_heart |
 | `LLM_MAX_TOKENS` | Max completion tokens (OpenAI) | unset |
 | `ROSA_MAX_ITERATIONS` | Max agent iterations per message | 15 |
 | `ROSA_MAX_HISTORY_MESSAGES` | Max messages kept in agent history | 20 |
@@ -249,12 +321,14 @@ ranger-llm-ui/
 - **MoveForward**: Move forward by specified distance (meters)
 - **MoveBackward**: Move backward by specified distance
 - **TurnAngle**: Rotate in place (positive = right, negative = left)
+- **NavigateToPose**: Navigate to a target pose
 - **StopRobot**: Emergency stop
 
 ### Status Tools
 - **BatteryStatus**: Get battery level and charging status
 - **SystemHealth**: Check overall system health
 - **GetOdometry**: Get current position and velocity
+- **GetCameraImage**: Capture a camera image (token-optimized; see CLAUDE.md)
 - **ListNodes**: List active ROS 2 nodes
 - **ListTopics**: List active ROS 2 topics
 
@@ -290,6 +364,9 @@ mypy ranger_llm_ui/
 - [x] OpenAI backend
 
 ### Near-Term
+- [x] Claude Pro/Max subscription backend (claude_proxy)
+- [x] Voice interface (local STT mic input + spoken TTS replies)
+- [x] Camera/sensor visualization (Status tab camera view)
 - [ ] Multi-step task automation
 - [ ] Confirmation dialogs for dangerous actions
 - [ ] Command history panel
@@ -298,8 +375,6 @@ mypy ranger_llm_ui/
 
 ### Future
 - [ ] Nav2 navigation integration
-- [ ] Voice interface
-- [ ] Camera/sensor visualization
 - [ ] Learning from corrections
 
 ## Contributing
