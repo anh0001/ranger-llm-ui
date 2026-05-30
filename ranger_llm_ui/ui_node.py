@@ -696,11 +696,14 @@ class RangerUINode:
                 outputs=[tts_audio],
             )
 
-            # When mic recording stops: transcribe -> fill command box -> send
+            # When mic recording stops: transcribe -> fill command box -> send.
+            # Also reset the mic component to None so it snaps back to the plain
+            # mic button instead of Gradio's post-record waveform/player editor
+            # (ChatGPT-style: tap mic, talk, it transcribes & sends, done).
             mic_event = mic_in.stop_recording(
-                fn=self.transcribe_audio,
+                fn=lambda p: (self.transcribe_audio(p), None),
                 inputs=[mic_in],
-                outputs=[msg],
+                outputs=[msg, mic_in],
             ).then(
                 fn=lambda: (gr.update(visible=False), gr.update(visible=True)),
                 inputs=None,
@@ -822,17 +825,25 @@ class RangerUINode:
                     padding: 0 !important;
                     overflow: visible !important;
                 }
-                /* Kill the device dropdown ("No microphone"), the clear/X icon
-                   button, and any leftover label. */
+                /* Kill the device dropdown ("No microphone found"), the clear/X
+                   icon button, the empty waveform canvas, and any leftover label
+                   (Gradio 6.x DOM: .mic-select, .icon-button-wrapper, the
+                   .microphone / recording-waveform canvases). */
                 .mic-compact .mic-select,
                 .mic-compact .icon-button-wrapper,
+                .mic-compact .microphone,
+                .mic-compact [data-testid="microphone-waveform"],
+                .mic-compact [data-testid="recording-waveform"],
                 .mic-compact label,
                 .mic-compact .label-icon {
                     display: none !important;
                 }
-                /* Center the controls row so the lone button sits under nothing. */
-                .mic-compact .mic-wrap,
-                .mic-compact .controls {
+                /* Collapse the nested audio containers so the lone button sits
+                   inline with no surrounding box or vertical padding. */
+                .mic-compact .audio-container,
+                .mic-compact .component-wrapper,
+                .mic-compact .controls,
+                .mic-compact .controls .wrapper {
                     display: flex !important;
                     align-items: center !important;
                     justify-content: center !important;
@@ -840,9 +851,25 @@ class RangerUINode:
                     min-height: 0 !important;
                     margin: 0 !important;
                     padding: 0 !important;
+                    border: none !important;
+                    background: transparent !important;
+                    box-shadow: none !important;
                 }
-                /* Round button; hide the injected "Record" text via font-size:0. */
-                .mic-compact .record-button {
+                /* Round buttons; hide the injected "Record"/"Stop" text via
+                   font-size:0 and draw a glyph with ::before instead. In Gradio
+                   6.x there is NO .record-icon element — the glyph must live on
+                   the button itself.
+
+                   IMPORTANT: do NOT set `display` here. Gradio keeps all five
+                   recorder buttons in the DOM and toggles them by recording
+                   state with `display:none`; overriding display would un-hide
+                   them all and stack them vertically. Center the glyph with
+                   line-height (vertical) + text-align (horizontal) instead. */
+                .mic-compact .record-button,
+                .mic-compact .stop-button,
+                .mic-compact .stop-button-paused,
+                .mic-compact .pause-button,
+                .mic-compact .resume-button {
                     font-size: 0 !important;
                     gap: 0 !important;
                     width: 44px !important;
@@ -850,25 +877,57 @@ class RangerUINode:
                     height: 44px !important;
                     padding: 0 !important;
                     border-radius: 50% !important;
-                    justify-content: center !important;
-                    align-items: center !important;
+                    text-align: center !important;
                 }
-                /* Swap the red record dot for a microphone glyph. */
-                .mic-compact .record-icon .dot,
-                .mic-compact .record-icon .pinger,
-                .mic-compact .record-button:before {
-                    display: none !important;
-                }
-                .mic-compact .record-icon {
+                /* Gradio's own .record-button:before draws a small orange record
+                   dot (content:""; background:var(--primary-600); fixed 16px;
+                   border-radius:full). Fully neutralize it — drop the background,
+                   the fixed size and the margin — so only our 🎤 glyph renders. */
+                .mic-compact .record-button::before {
+                    content: "🎤" !important;
+                    background: none !important;
+                    width: auto !important;
+                    height: auto !important;
                     margin: 0 !important;
-                    display: inline-flex !important;
-                    align-items: center !important;
-                    justify-content: center !important;
-                }
-                .mic-compact .record-icon:before {
-                    content: "🎤";
+                    border-radius: 0 !important;
                     font-size: 20px !important;
-                    line-height: 1 !important;
+                    line-height: 44px !important;
+                }
+                /* While recording, the record button is swapped for a red stop
+                   button — give it a square "stop" glyph so it reads clearly. */
+                .mic-compact .stop-button::before,
+                .mic-compact .stop-button-paused::before {
+                    content: "⏹" !important;
+                    background: none !important;
+                    width: auto !important;
+                    height: auto !important;
+                    margin: 0 !important;
+                    border-radius: 0 !important;
+                    font-size: 20px !important;
+                    line-height: 44px !important;
+                }
+                /* After a recording stops, Gradio briefly flips gr.Audio into a
+                   waveform PLAYER/EDITOR (play, rewind, skip, speed, volume,
+                   trim, undo) that overflows and overlaps the Send button. We
+                   reset the value to None on stop (see stop_recording handler)
+                   so it snaps back to the mic button, but hide all the player
+                   chrome too so the transcription window never shows it. */
+                .mic-compact .waveform-container,
+                .mic-compact .timestamps,
+                .mic-compact .control-wrapper,
+                .mic-compact .play-pause-wrapper,
+                .mic-compact .settings-wrapper,
+                .mic-compact .playback,
+                .mic-compact .play-pause-button,
+                .mic-compact .rewind,
+                .mic-compact .skip,
+                .mic-compact .volume,
+                .mic-compact .volume-control-wrapper,
+                .mic-compact .standard-player,
+                .mic-compact .timeline-wrapper,
+                .mic-compact .action-buttons,
+                .mic-compact button.action {
+                    display: none !important;
                 }
 
                 /* Voice-reply player: keep it rendered (needed for autoplay) but
