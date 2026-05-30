@@ -426,37 +426,51 @@ class RangerUINode:
                         height=500,
                     )
 
-                    with gr.Row():
+                    # Input row: text + inline mic (icon only) + Send, like a chat app
+                    with gr.Row(elem_classes=["input-row"]):
                         msg = gr.Textbox(
                             label="Command",
                             placeholder="Type a command like 'move forward 1 meter'",
-                            scale=4,
+                            show_label=False,
+                            container=False,
+                            scale=8,
                         )
-                        submit_btn = gr.Button("Send", variant="primary", scale=1)
-                        stop_chat_btn = gr.Button("Stop", variant="stop", scale=1, visible=False)
-
-                    # Voice input: record mic -> speech-to-text -> command box
-                    with gr.Row():
+                        # Mic: record -> speech-to-text -> command box (auto-sends).
+                        # Styled down to a single mic button via the .mic-compact CSS.
                         mic_in = gr.Audio(
                             sources=["microphone"],
                             type="filepath",
-                            label="Voice command (record, then it sends automatically)",
-                            scale=4,
+                            show_label=False,
+                            container=False,
+                            scale=0,
+                            min_width=56,
+                            elem_classes=["mic-compact"],
                         )
-                        speak_toggle = gr.Checkbox(
-                            value=True,
-                            label="Speak replies",
-                            scale=1,
+                        submit_btn = gr.Button(
+                            "Send", variant="primary", scale=0, min_width=90
                         )
-                    # Text-to-speech output for the assistant reply
+                        stop_chat_btn = gr.Button(
+                            "Stop", variant="stop", scale=0, min_width=80, visible=False
+                        )
+
+                    # Text-to-speech output for the assistant reply. Kept rendered
+                    # (autoplay needs it in the DOM) but shrunk via .tts-mini CSS.
                     tts_audio = gr.Audio(
                         label="Voice reply",
+                        show_label=False,
                         autoplay=True,
                         interactive=False,
+                        elem_classes=["tts-mini"],
                     )
 
                     with gr.Row():
                         clear_btn = gr.Button("Clear Chat")
+                        speak_toggle = gr.Checkbox(
+                            value=True,
+                            label="🔊 Speak replies",
+                            scale=0,
+                            min_width=140,
+                        )
                         stop_btn = gr.Button(
                             "EMERGENCY STOP",
                             variant="stop",
@@ -788,6 +802,85 @@ class RangerUINode:
                 /* Hide Gradio footer */
                 footer {
                     display: none !important;
+                }
+
+                /* Keep the chat input row items on one line, vertically centered */
+                .input-row {
+                    align-items: center !important;
+                    gap: 6px !important;
+                }
+
+                /* Compact mic: strip the box and all the recorder chrome, leaving
+                   one round button that shows a mic glyph (like a chat app). */
+                .mic-compact {
+                    flex: 0 0 auto !important;
+                    min-width: 48px !important;
+                    max-width: 48px !important;
+                    border: none !important;
+                    background: transparent !important;
+                    box-shadow: none !important;
+                    padding: 0 !important;
+                    overflow: visible !important;
+                }
+                /* Kill the device dropdown ("No microphone"), the clear/X icon
+                   button, and any leftover label. */
+                .mic-compact .mic-select,
+                .mic-compact .icon-button-wrapper,
+                .mic-compact label,
+                .mic-compact .label-icon {
+                    display: none !important;
+                }
+                /* Center the controls row so the lone button sits under nothing. */
+                .mic-compact .mic-wrap,
+                .mic-compact .controls {
+                    display: flex !important;
+                    align-items: center !important;
+                    justify-content: center !important;
+                    gap: 0 !important;
+                    min-height: 0 !important;
+                    margin: 0 !important;
+                    padding: 0 !important;
+                }
+                /* Round button; hide the injected "Record" text via font-size:0. */
+                .mic-compact .record-button {
+                    font-size: 0 !important;
+                    gap: 0 !important;
+                    width: 44px !important;
+                    min-width: 44px !important;
+                    height: 44px !important;
+                    padding: 0 !important;
+                    border-radius: 50% !important;
+                    justify-content: center !important;
+                    align-items: center !important;
+                }
+                /* Swap the red record dot for a microphone glyph. */
+                .mic-compact .record-icon .dot,
+                .mic-compact .record-icon .pinger,
+                .mic-compact .record-button:before {
+                    display: none !important;
+                }
+                .mic-compact .record-icon {
+                    margin: 0 !important;
+                    display: inline-flex !important;
+                    align-items: center !important;
+                    justify-content: center !important;
+                }
+                .mic-compact .record-icon:before {
+                    content: "🎤";
+                    font-size: 20px !important;
+                    line-height: 1 !important;
+                }
+
+                /* Voice-reply player: keep it rendered (needed for autoplay) but
+                   unobtrusive — a thin strip, no big container. */
+                .tts-mini {
+                    border: none !important;
+                    background: transparent !important;
+                    box-shadow: none !important;
+                    margin-top: 4px !important;
+                }
+                .tts-mini .controls {
+                    min-height: 0 !important;
                 }
             """
 
