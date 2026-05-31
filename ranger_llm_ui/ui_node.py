@@ -31,7 +31,12 @@ from ranger_llm_ui.tools.movement_tools import get_ros_interface
 from ranger_llm_ui.tools.status_tools import get_status_interface
 from ranger_llm_ui.tools.camera_tools import get_camera_interface
 from ranger_llm_ui.utils.logger import setup_logging, get_command_logger
-from ranger_llm_ui.voice import get_transcriber, get_synthesizer, voice_status
+from ranger_llm_ui.voice import (
+    get_transcriber,
+    get_synthesizer,
+    get_corrector,
+    voice_status,
+)
 
 # Load environment variables from .env file
 load_dotenv()
@@ -316,12 +321,26 @@ class RangerUINode:
             yield history
 
     def transcribe_audio(self, audio_path: Optional[str]) -> str:
-        """Transcribe recorded mic audio to text for the command box."""
+        """Transcribe recorded mic audio to text for the command box.
+
+        Runs an optional LLM second pass (gated on Whisper confidence, with a
+        hard stop-command bypass) to fix obvious ASR errors against the robot
+        command vocabulary before the text goes to the agent.
+        """
         if not audio_path:
             return ""
-        text = get_transcriber().transcribe(audio_path)
+        transcriber = get_transcriber()
+        text = transcriber.transcribe(audio_path)
         logger.info("Voice command transcribed: %r", text)
-        return text
+        corrected = get_corrector().correct(
+            text,
+            transcriber.last_stats,
+            provider=self.llm_provider,
+            model=self.model_name,
+        )
+        if corrected != text:
+            logger.info("Voice command corrected: %r", corrected)
+        return corrected
 
     @staticmethod
     def _content_to_text(content) -> str:

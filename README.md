@@ -196,11 +196,34 @@ replies** checkbox.
 
 STT uses **faster-whisper** and is installed by `requirements.txt`
 (`faster-whisper`, `av`, `soundfile`). No extra step. The first transcription
-lazily loads the model.
+lazily loads the model. Decoding is tuned for short, fixed-vocabulary commands:
+beam search (`beam_size=5`), deterministic (`temperature=0`), and biased toward
+the robot's command words via a built-in `initial_prompt` + `hotwords`.
 
 ```bash
-export WHISPER_MODEL=small.en   # default base.en; also medium.en, large-v3, ...
+export WHISPER_MODEL=small.en   # default; use medium.en for best accuracy on a GPU box
+export WHISPER_BEAM_SIZE=5      # 1 = greedy (faster, less accurate)
+export WHISPER_HOTWORDS=""      # override/disable the built-in command-word boost
+export WHISPER_INITIAL_PROMPT="" # override/disable the built-in domain prompt
 export WHISPER_VAD=1            # optional voice-activity trimming (pulls onnxruntime)
+```
+
+#### LLM second-pass correction (uses Claude)
+
+After Whisper, an optional second pass sends **low-confidence** transcripts to
+the app's LLM (the same provider as the chat agent) to fix obvious ASR errors
+against the command vocabulary — e.g. `turn write ninety degrees` →
+`turn right ninety degrees`, `what's the batter level` → `battery status`.
+It is gated so it stays cheap and safe:
+
+- **Stop commands bypass the LLM** entirely (never rewritten).
+- **High-confidence transcripts skip it** (no added latency).
+- It **never invents** a missing distance/angle/destination, and falls back to
+  the raw transcript on any error.
+
+```bash
+export VOICE_LLM_CORRECTION=1            # on by default; 0 to disable
+export VOICE_CORRECTION_MODEL=haiku-4.5  # default: the chat model; haiku = faster/cheaper
 ```
 
 ### Text-to-Speech (TTS) — install a backend, or replies are silent
@@ -281,7 +304,10 @@ The UI provides manual teleop buttons for direct control:
 | `OLLAMA_BASE_URL` | Ollama server URL | http://localhost:11434 |
 | `GRADIO_PORT` | Web UI port | 7860 |
 | `GRADIO_SERVER_NAME` | Bind address (`127.0.0.1` to expose only via an HTTPS proxy) | 0.0.0.0 |
-| `WHISPER_MODEL` | STT model (base.en, small.en, medium.en, ...) | base.en |
+| `WHISPER_MODEL` | STT model (base.en, small.en, medium.en, ...) | small.en |
+| `WHISPER_BEAM_SIZE` | STT beam search width (1 = greedy) | 5 |
+| `VOICE_LLM_CORRECTION` | LLM second-pass transcript correction | 1 (on) |
+| `VOICE_CORRECTION_MODEL` | Model for the correction call | chat model |
 | `TTS_BACKEND` | TTS engine: auto, kokoro, piper, espeak | auto |
 | `PIPER_VOICE` | Piper voice name | en_US-lessac-medium |
 | `KOKORO_VOICE` | Kokoro voice name | af_heart |

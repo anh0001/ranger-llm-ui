@@ -10,11 +10,13 @@ and the voice helpers report a clear status string instead of crashing.
 Public API:
     get_transcriber() -> Transcriber   # speech-to-text (singleton)
     get_synthesizer() -> Synthesizer   # text-to-speech (singleton)
+    get_corrector() -> TranscriptCorrector  # optional LLM transcript fixup
     voice_status() -> str              # human-readable availability summary
 """
 
 from ranger_llm_ui.voice.transcriber import Transcriber, get_transcriber
 from ranger_llm_ui.voice.synthesizer import Synthesizer, get_synthesizer
+from ranger_llm_ui.voice.corrector import TranscriptCorrector, get_corrector
 
 
 def voice_status() -> str:
@@ -27,7 +29,9 @@ def voice_status() -> str:
 __all__ = [
     "Transcriber",
     "Synthesizer",
+    "TranscriptCorrector",
     "get_transcriber",
     "get_synthesizer",
+    "get_corrector",
     "voice_status",
 ]
