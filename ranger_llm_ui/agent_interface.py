@@ -310,7 +310,8 @@ def create_llm(
 
         # Short aliases → full model IDs (langchain_claude_code expects full names)
         model_aliases = {
-            "opus": "claude-opus-4-7",
+            "opus": "claude-opus-4-8",
+            "opus-4.8": "claude-opus-4-8",
             "opus-4.7": "claude-opus-4-7",
             "sonnet": "claude-sonnet-4-6",
             "sonnet-4.6": "claude-sonnet-4-6",
@@ -365,7 +366,9 @@ def create_llm(
         )
 
         model_aliases = {
-            "opus": "claude-opus-4-20250514",
+            "opus": "claude-opus-4-8",
+            "opus-4.8": "claude-opus-4-8",
+            "opus-4.7": "claude-opus-4-7",
             "sonnet": "claude-sonnet-4-6",
             "sonnet-4.6": "claude-sonnet-4-6",
             "sonnet-4.5": "claude-sonnet-4-5-20250929",

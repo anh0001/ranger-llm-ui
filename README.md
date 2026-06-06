@@ -368,11 +368,29 @@ on `/execute_skill`):
 - **HomeArm**: Move the arm to a named pose (`ready` or `rest`)
 - **Handover**: Hand the held object to a person, then open the gripper
 
-> Requires the MobileManipulationCore stack: build + source its `manipulation_msgs`
-> and run its `skill_server` (`ros2 launch manipulation_bringup core_launch.py`,
-> on top of the `ranger-garden-assistant` base bringup). The tools are simulated
-> in `--simple` mode and fail gracefully (with a hint) if the stack is absent.
-> Disable with `ENABLE_MANIPULATION_TOOLS=false`; remap with `EXECUTE_SKILL_ACTION`.
+> Requires the MobileManipulationCore stack: its `manipulation_msgs` overlay must
+> be **sourced before the UI starts** (the action client is wired up at import
+> time), and its `skill_server` must be running (`ros2 launch
+> manipulation_bringup core_launch.py`, on top of the `ranger-garden-assistant`
+> base bringup).
+>
+> **Sourcing the overlay:** if you launch through `scripts/dev.sh` (the VS Code
+> tasks do), the sibling `../MobileManipulationCore/install` is detected and
+> sourced automatically — no setup needed when the standard sibling layout is in
+> place. Point elsewhere with `MMC_INSTALL=/path/to/MobileManipulationCore/install`,
+> or set `MMC_INSTALL=` (empty) to skip the overlay. Launching by hand instead of
+> via `dev.sh`? Source it yourself first:
+> ```bash
+> source /opt/ros/humble/setup.bash
+> source ../MobileManipulationCore/install/setup.bash   # provides manipulation_msgs
+> ```
+> If `manipulation_msgs` is missing, Pick/Place report "manipulation system
+> unavailable"; if the overlay is sourced but `skill_server` isn't running, they
+> report "`/execute_skill` action server not available".
+>
+> The tools are simulated in `--simple` mode and fail gracefully (with a hint) if
+> the stack is absent. Disable with `ENABLE_MANIPULATION_TOOLS=false`; remap the
+> action with `EXECUTE_SKILL_ACTION`.
 
 ## Safety Features
 

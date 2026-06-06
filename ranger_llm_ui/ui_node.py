@@ -572,6 +572,7 @@ class RangerUINode:
                             )
                             model_choices = [
                                 "sonnet-4.6",
+                                "opus-4.8",
                                 "opus-4.7",
                                 "haiku-4.5",
                                 "sonnet-4",
@@ -638,7 +639,7 @@ class RangerUINode:
                             **Environment Variables:**
                             You can configure the following via environment variables:
                             - `LLM_PROVIDER`: openai, ollama, anthropic, or claude_code
-                            - `LLM_MODEL`: Model name (claude_code defaults: sonnet-4.6; also opus-4.7, haiku-4.5, sonnet-4)
+                            - `LLM_MODEL`: Model name (claude_code defaults: sonnet-4.6; also opus-4.8, opus-4.7, haiku-4.5, sonnet-4)
                             - `CLAUDE_CODE_OAUTH_TOKEN`: OAuth token for Claude Pro/Max subscription
                             - `GRADIO_PORT`: Server port (default: 7860)
                             - `SHOW_LLM_USAGE`: Show token usage (true/false)

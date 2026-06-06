@@ -99,7 +99,7 @@
             "detail": "Run the UI against CLIProxyAPI (provider=claude_proxy). Start 'CLIProxyAPI: start' first.",
             "type": "shell",
             "command": "${workspaceFolder}/scripts/dev.sh",
-            "args": ["run", "--provider", "claude_proxy", "--model", "${input:model}"],
+            "args": ["run", "--provider", "claude_proxy", "--model", "${input:proxyModel}"],
             "isBackground": true,
             "problemMatcher": [],
             "presentation": { "reveal": "always", "panel": "dedicated", "group": "ranger-runtime" }
@@ -125,6 +125,13 @@
             "type": "promptString",
             "description": "Model name (leave blank for provider default; e.g. gpt-4o-mini, sonnet-4.6, opus)",
             "default": ""
+        },
+        {
+            "id": "proxyModel",
+            "type": "pickString",
+            "description": "Claude (via CLIProxyAPI) model",
+            "default": "sonnet-4.6",
+            "options": ["sonnet-4.6", "sonnet-4.5", "opus-4.8", "opus-4.7", "opus", "haiku-4.5"]
         }
     ]
 }

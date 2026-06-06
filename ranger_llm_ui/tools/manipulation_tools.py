@@ -19,9 +19,13 @@ wrapped by this module mirror MobileManipulationCore's skill registry:
     handover        - present the held object to a person and release it
 
 Runtime requirements (real robot only; --simple mode simulates these tools):
-  * MobileManipulationCore's ``manipulation_msgs`` package built + sourced so
-    ``ExecuteSkill`` can be imported (overlay the MMC workspace on top of this
-    one).
+  * MobileManipulationCore's ``manipulation_msgs`` package built so
+    ``ExecuteSkill`` can be imported. Sourcing the MMC overlay is NOT required:
+    if it is built but not on PYTHONPATH (e.g. the UI was launched with a plain
+    ``ros2 run`` / ``ros2 launch`` instead of scripts/dev.sh), it is
+    auto-discovered under ``../MobileManipulationCore/install`` and added to
+    sys.path. Override with ``MMC_INSTALL`` (the MMC ``install/`` dir) or
+    ``MANIPULATION_MSGS_PYTHONPATH`` (a dist-packages dir) if it lives elsewhere.
   * MobileManipulationCore's ``skill_server`` running so /execute_skill is
     advertised. That server is brought up by ``manipulation_bringup
     core_launch.py`` on top of the ranger-garden-assistant base stack.
@@ -30,10 +34,12 @@ Sibling repo: https://github.com/anh0001/MobileManipulationCore
 """
 
 import os
+import sys
 import json
 import time
 import logging
 import threading
+from pathlib import Path
 from typing import Optional, Type, Any, Dict
 
 from langchain.tools import BaseTool
@@ -53,20 +59,107 @@ except ImportError:
     ROS_AVAILABLE = False
     logger.warning("ROS 2 (rclpy) not available. Manipulation tools run in simulation mode.")
 
-# Try to import the generic skill action from MobileManipulationCore's
-# manipulation_msgs. Absent until that workspace is built + sourced.
+# --------------------------------------------------------------------------- #
+# manipulation_msgs discovery / self-healing import
+#
+# The skill action type lives in MobileManipulationCore's ``manipulation_msgs``
+# package. It imports cleanly once that workspace's install space is on
+# PYTHONPATH: the rosidl-generated Python bindings carry an RPATH to their own
+# typesupport .so files, so just adding the dist-packages dir is enough — the
+# base message deps (action_msgs, builtin_interfaces, ...) come from the
+# already-sourced /opt/ros/<distro>. When the UI is launched WITHOUT sourcing
+# the MMC overlay (e.g. plain ``ros2 run`` / ``ros2 launch`` rather than
+# scripts/dev.sh, which sources it), we self-heal by locating that dir and
+# prepending it to sys.path before importing — so pick/place work regardless of
+# how the UI was started, as long as MMC's manipulation_msgs has been built.
+# --------------------------------------------------------------------------- #
+def _find_manipulation_msgs_pythonpath() -> Optional[str]:
+    """Locate the dist/site-packages dir that contains ``manipulation_msgs``.
+
+    Honors, in order: ``MANIPULATION_MSGS_PYTHONPATH`` (a dist-packages dir),
+    ``MMC_INSTALL`` (the MobileManipulationCore ``install/`` root — the same var
+    scripts/dev.sh uses), then the documented sibling checkout
+    ``../MobileManipulationCore/install``. Returns ``None`` if not found.
+    """
+    pyver = f"python{sys.version_info.major}.{sys.version_info.minor}"
+
+    def _has_pkg(d: Path) -> bool:
+        return (d / "manipulation_msgs" / "__init__.py").is_file()
+
+    # 1. Direct dist-packages override (highest priority).
+    direct = os.getenv("MANIPULATION_MSGS_PYTHONPATH")
+    if direct and _has_pkg(Path(direct)):
+        return direct
+
+    # 2/3. Candidate install roots: explicit MMC_INSTALL, then sibling default.
+    roots: list[Path] = []
+    mmc_install = os.getenv("MMC_INSTALL")
+    if mmc_install:
+        roots.append(Path(mmc_install))
+    # this file: <repo>/ranger_llm_ui/tools/manipulation_tools.py
+    #            -> repo root at parents[2], MMC is a sibling of the repo.
+    try:
+        repo_root = Path(__file__).resolve().parents[2]
+        roots.append(repo_root.parent / "MobileManipulationCore" / "install")
+    except IndexError:  # pragma: no cover - defensive
+        pass
+
+    for root in roots:
+        if not root.is_dir():
+            continue
+        # Cover colcon isolated install (per-package prefix) and merged install
+        # layouts, with both local/lib and lib, dist- and site-packages.
+        for base in (root / "manipulation_msgs", root):
+            for libdir in ("local/lib", "lib"):
+                for pkgs in ("dist-packages", "site-packages"):
+                    cand = base / libdir / pyver / pkgs
+                    if _has_pkg(cand):
+                        return str(cand)
+        # Fallback: bounded glob in case the layout differs from the above.
+        try:
+            for init in root.glob(
+                f"**/{pyver}/*-packages/manipulation_msgs/__init__.py"
+            ):
+                return str(init.parent.parent)
+        except OSError:  # pragma: no cover - best effort
+            pass
+    return None
+
+
+# Try the direct import first (works when the MMC overlay is sourced).
 try:
     from manipulation_msgs.action import ExecuteSkill
     SKILL_ACTION_AVAILABLE = True
 except ImportError:
     SKILL_ACTION_AVAILABLE = False
-    if ROS_AVAILABLE:
-        logger.warning(
-            "manipulation_msgs not available. Manipulation skills will be "
-            "inert until the MobileManipulationCore workspace is built and "
-            "sourced (provides manipulation_msgs/action/ExecuteSkill). See "
-            "https://github.com/anh0001/MobileManipulationCore"
-        )
+
+# Not sourced? Auto-discover the built manipulation_msgs and retry.
+if not SKILL_ACTION_AVAILABLE and ROS_AVAILABLE:
+    _mm_pythonpath = _find_manipulation_msgs_pythonpath()
+    if _mm_pythonpath and _mm_pythonpath not in sys.path:
+        sys.path.insert(0, _mm_pythonpath)
+        try:
+            from manipulation_msgs.action import ExecuteSkill
+            SKILL_ACTION_AVAILABLE = True
+            logger.info(
+                "manipulation_msgs auto-discovered and added to sys.path: %s",
+                _mm_pythonpath,
+            )
+        except ImportError:  # pragma: no cover - path found but import failed
+            logger.debug(
+                "manipulation_msgs still not importable after adding %s to sys.path",
+                _mm_pythonpath,
+            )
+
+if not SKILL_ACTION_AVAILABLE and ROS_AVAILABLE:
+    logger.warning(
+        "manipulation_msgs not available. Manipulation skills will be inert "
+        "until the MobileManipulationCore workspace is built (and reachable). "
+        "Auto-discovery looked under MANIPULATION_MSGS_PYTHONPATH, MMC_INSTALL, "
+        "and ../MobileManipulationCore/install. Build it there, or set "
+        "MMC_INSTALL to your MMC install/ dir if it lives elsewhere. See "
+        "https://github.com/anh0001/MobileManipulationCore"
+    )
 
 
 # Action name (override with EXECUTE_SKILL_ACTION if remapped on the robot)
@@ -124,13 +217,39 @@ class ManipulationInterface:
 
         if not self._simulation_mode and self._node is not None:
             if SKILL_ACTION_AVAILABLE:
-                self._client = ActionClient(
-                    self._node, ExecuteSkill, EXECUTE_SKILL_ACTION
-                )
-                logger.info(
-                    "Manipulation interface initialized (action=%s)",
-                    EXECUTE_SKILL_ACTION,
-                )
+                # NOTE: importing manipulation_msgs (so SKILL_ACTION_AVAILABLE is
+                # True) is NOT sufficient to build the action client. The RMW
+                # dlopens the *introspection* typesupport .so at ActionClient
+                # creation via LD_LIBRARY_PATH / the ament index, NOT via the
+                # Python bindings' RPATH. When MMC's Python package is reachable
+                # (e.g. auto-discovered onto sys.path) but its overlay was never
+                # sourced, that .so can't be found and rclpy raises ValueError
+                # ("type_support is null"). Catch it so manipulation degrades to
+                # inert instead of crashing agent init (and the SimpleAgent
+                # fallback). Source the MMC overlay to actually enable it.
+                try:
+                    self._client = ActionClient(
+                        self._node, ExecuteSkill, EXECUTE_SKILL_ACTION
+                    )
+                    logger.info(
+                        "Manipulation interface initialized (action=%s)",
+                        EXECUTE_SKILL_ACTION,
+                    )
+                except Exception as e:  # typically ValueError: type_support is null
+                    self._client = None
+                    logger.warning(
+                        "Manipulation interface initialized WITHOUT a skill "
+                        "action client: could not create the %s ActionClient "
+                        "(%s). manipulation_msgs imports, but its typesupport "
+                        "library isn't loadable in this process. SOURCE the "
+                        "MobileManipulationCore overlay before launching "
+                        "(e.g. `source ../MobileManipulationCore/install/"
+                        "setup.bash`) so LD_LIBRARY_PATH/AMENT_PREFIX_PATH "
+                        "include manipulation_msgs, or disable arm tools with "
+                        "ENABLE_MANIPULATION_TOOLS=false.",
+                        EXECUTE_SKILL_ACTION,
+                        e,
+                    )
             else:
                 logger.warning(
                     "Manipulation interface initialized WITHOUT a skill action "
@@ -197,9 +316,12 @@ class ManipulationInterface:
         """
         if self._client is None:
             return False, (
-                "Error: ExecuteSkill action client not available. The "
-                "MobileManipulationCore manipulation_msgs package must be built "
-                "and sourced for the agent to run manipulation skills."
+                "Error: ExecuteSkill action client not available because "
+                "manipulation_msgs could not be imported. Build the "
+                "MobileManipulationCore manipulation_msgs package; it is then "
+                "auto-discovered under ../MobileManipulationCore/install. If it "
+                "lives elsewhere, set MMC_INSTALL (its install/ dir) or "
+                "MANIPULATION_MSGS_PYTHONPATH before launching the UI."
             )
 
         # Wait for the skill server

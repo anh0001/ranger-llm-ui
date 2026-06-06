@@ -11,8 +11,12 @@
 #   build            Build ROS 2 packages (ranger_llm_msgs + ranger_llm_ui)
 #   build-msgs       Build only the ranger_llm_msgs action interfaces
 #   clean            Remove build/ install/ log/ artifacts
-#   run [args]       Run the Gradio UI WITHOUT ROS 2 (simulation). Extra args
-#                    pass straight to ui_node, e.g.  run --simple
+#   run [args]       Run the Gradio UI via bare `python -m` (not ros2 launch).
+#                    Sources the ROS underlay + this workspace + the MMC overlay
+#                    first (guarded; no-op without ROS), so real-robot tools
+#                    (movement + manipulation) work. Pass --simple to force
+#                    pure simulation. Extra args go straight to ui_node, e.g.
+#                                                     run --simple
 #                                                     run --provider openai --model gpt-4o-mini
 #   run-ros [args]   ros2 launch the UI WITH ROS 2 (build first: `dev.sh build`)
 #   proxy            Start CLIProxyAPI (Claude Pro/Max OAuth -> Anthropic HTTP)
@@ -35,6 +39,14 @@ cd "$REPO_ROOT"
 export PYTHONUSERBASE="${PYTHONUSERBASE:-$HOME/.local/ranger_llm_ui_py310}"
 ROS_DISTRO="${ROS_DISTRO:-humble}"
 CLIPROXY_DIR="${CLIPROXY_DIR:-$HOME/tools/cliproxyapi}"
+
+# Default the MobileManipulationCore overlay to the documented sibling checkout
+# (../MobileManipulationCore) so manipulation skills (/execute_skill,
+# manipulation_msgs) resolve with zero config. Override MMC_INSTALL to point
+# elsewhere, or set it empty to skip the overlay entirely.
+if [[ -z "${MMC_INSTALL+x}" && -f "$REPO_ROOT/../MobileManipulationCore/install/setup.bash" ]]; then
+  MMC_INSTALL="$(cd "$REPO_ROOT/../MobileManipulationCore/install" && pwd)"
+fi
 
 _site="$PYTHONUSERBASE/lib/python3.10/site-packages"
 export PYTHONPATH="$_site${PYTHONPATH:+:$PYTHONPATH}"
@@ -90,6 +102,15 @@ case "$cmd" in
     exec rm -rf build install log
     ;;
   run)
+    # Source the ROS underlay + this workspace overlay + the MobileManipulation-
+    # Core overlay BEFORE launching. This is REQUIRED for the real-robot tools:
+    # ranger_llm_msgs (movement actions) and manipulation_msgs come from these
+    # overlays, and crucially the rosidl typesupport .so files are dlopened by
+    # the RMW via LD_LIBRARY_PATH set AT PROCESS START — a sourcing this script
+    # must do before `exec`, not something the Python process can fix later.
+    # All sources are guarded (no-ops if absent), so pure-simulation / no-ROS
+    # machines are unaffected, and `--simple` still simulates regardless.
+    source_ros
     load_env
     exec python -m ranger_llm_ui.ui_node "$@"
     ;;
