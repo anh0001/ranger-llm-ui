@@ -3,7 +3,7 @@ Tool Registry - Consolidates all tools for the LangChain agent.
 
 This module provides a central registry of all available tools for the
 Ranger robot agent. Tools are categorized by function:
-- Movement tools: MoveForward, MoveBackward, TurnAngle, StopRobot, NavigateToPose
+- Movement tools: MoveForward, MoveBackward, TurnAngle, MoveToPose, ZeroOdometry, StopRobot, NavigateToPose
 - Status tools: BatteryStatus, SystemHealth, GetOdometry, ListNodes, ListTopics
 - Perception tools: GetCameraImage
 - Manipulation tools: Pick, Place, PickAndPlace, HomeArm, ReadyArm, Handover
@@ -23,6 +23,8 @@ from ranger_llm_ui.tools.movement_tools import (
     MoveForwardTool,
     MoveBackwardTool,
     TurnAngleTool,
+    MoveToPoseTool,
+    ZeroOdometryTool,
     StopRobotTool,
     NavigateToPoseTool,
     get_movement_tools,
@@ -74,7 +76,10 @@ MANIPULATION_TOOLS_ENABLED = os.getenv(
 TOOL_CATEGORIES = {
     "movement": {
         "description": "Tools for controlling robot movement",
-        "tools": ["MoveForward", "MoveBackward", "TurnAngle", "StopRobot", "NavigateToPose"],
+        "tools": [
+            "MoveForward", "MoveBackward", "TurnAngle", "MoveToPose",
+            "ZeroOdometry", "StopRobot", "NavigateToPose",
+        ],
     },
     "status": {
         "description": "Tools for querying robot and system status",
@@ -133,6 +138,8 @@ def get_all_tools(
             MoveForwardTool(),
             MoveBackwardTool(),
             TurnAngleTool(),
+            MoveToPoseTool(),
+            ZeroOdometryTool(),
             StopRobotTool(),
             NavigateToPoseTool(),
         ])

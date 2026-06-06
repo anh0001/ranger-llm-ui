@@ -167,10 +167,45 @@ See [agent_interface.py](ranger_llm_ui/agent_interface.py) for the integration.
 Tools are LangChain `BaseTool` subclasses that the agent can invoke. Tools are organized by category:
 
 **Movement Tools** ([movement_tools.py](ranger_llm_ui/tools/movement_tools.py)):
-- `MoveForwardTool` - Move forward by distance (meters)
-- `MoveBackwardTool` - Move backward by distance
-- `TurnAngleTool` - Rotate in place (degrees)
-- `StopRobotTool` - Emergency stop
+Two layers — autonomous Nav2 navigation for absolute goals, plus custom
+dead-reckoning primitives for relative robot-body-frame moves.
+- `NavigateToPoseTool` - PRIMARY navigation. Drive to an absolute pose
+  (`x, y, yaw_deg?, frame?`) via the Nav2 `NavigateToPose` action
+  (`navigate_to_pose`) — obstacle-aware global + local planning, the same as
+  RViz's "2D Nav Goal". Goal defaults to the `map` frame. Needs the Nav2 stack
+  running (`robofi_bringup` navigation) + `nav2_msgs` sourced; simulated in
+  `--simple` mode. Env overrides: `NAV2_NAVIGATE_ACTION`, `NAV2_GOAL_FRAME`,
+  `NAV2_GOAL_TIMEOUT_S`.
+- `MoveForwardTool` / `MoveBackwardTool` / `TurnAngleTool` - LOW-LEVEL
+  dead-reckoning primitives for RELATIVE moves in the robot-body frame (no
+  obstacle avoidance). They drive the custom `drive_distance` / `rotate_angle`
+  closed-loop odometry action server ([movement_action_server.py](ranger_llm_ui/movement_action_server.py)),
+  not Nav2. The manual-control buttons (Forward/Back/Left/Right) route here.
+- `MoveToPoseTool` - LOW-LEVEL primitive for an ABSOLUTE goal pose
+  (`x, y, yaw_deg?`) in the **odometry frame** (the frame reset by
+  `ZeroOdometry`; yaw CCW-positive). It reads the robot's current odom pose and
+  runs a **turn-drive-turn** maneuver — rotate to face the destination point,
+  drive straight there, then rotate to the requested final absolute heading
+  (`yaw_deg`, optional) — by composing the same `rotate_angle` / `drive_distance`
+  actions client-side (no new ROS message). Dead-reckoning, NO obstacle
+  avoidance and NO map localization (drifts over distance); for obstacle-aware
+  map-frame goals use `NavigateToPoseTool`. Returns an error if `/odom` is
+  unavailable. Simulated in `--simple` mode (current pose treated as origin).
+- `ZeroOdometryTool` - Reset odometry so the robot's current pose becomes
+  `(0, 0, 0)` by calling the robot-side **odom-reset relay service**
+  (`/reset_odom`, `std_srvs/srv/Trigger`, env override `RESET_ODOM_SERVICE`).
+  The relay (`odom_reset_relay` node) snaps the `/odom` topic to zero at the
+  source, so every `/odom` subscriber — `MoveToPose`'s absolute reference and
+  the `GetOdometry` readout — sees the zeroed frame automatically (no
+  per-interface software offset). It does NOT reset any map/AMCL/FASTLIO
+  localization. Returns the `Trigger` response message; reports a clear error if
+  the relay service is unavailable or `std_srvs` isn't sourced. Simulated in
+  `--simple` mode.
+- `StopRobotTool` - Emergency stop: cancels the active goal (Nav2 or
+  dead-reckoning) and zeroes `/cmd_vel`. Because `MoveToPose` runs its phases as
+  sequential `rotate_angle`/`drive_distance` goals, a stop mid-maneuver cancels
+  the current phase and the sequence aborts (it does not advance to the next
+  phase).
 
 **Status Tools** ([status_tools.py](ranger_llm_ui/tools/status_tools.py)):
 - `BatteryStatusTool` - Get battery level

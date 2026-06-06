@@ -62,7 +62,9 @@ ros:
     odom: /odom
     battery_state: /battery_state
 
-  # Action servers for closed-loop movement control
+  # Custom dead-reckoning action servers for RELATIVE moves in robot-body frame
+  # (MoveForward/MoveBackward/TurnAngle). Closed-loop odometry control, no
+  # obstacle avoidance. Hosted by movement_action_server.py.
   actions:
     drive_distance: /drive_distance
     rotate_angle: /rotate_angle
@@ -78,6 +80,21 @@ ros:
 
   # Timeout waiting for action server to become available (seconds)
   action_server_timeout: 5.0
+
+  # Nav2 "2D Nav Goal" autonomous navigation (the NavigateToPose tool). Drives
+  # to an ABSOLUTE pose with obstacle-aware global + local planning — the same
+  # path Nav2 takes for RViz's "2D Nav Goal". Requires the Nav2 stack running
+  # (robofi_bringup navigation) and nav2_msgs sourced. Relative moves use the
+  # dead-reckoning actions above instead.
+  navigation:
+    # Nav2 NavigateToPose action server name (env: NAV2_NAVIGATE_ACTION)
+    navigate_action: navigate_to_pose
+    # Frame the goal pose (x, y, yaw) is expressed in (env: NAV2_GOAL_FRAME).
+    # 'map' is the Nav2 global frame.
+    goal_frame: map
+    # Max client-side wait for Nav2 to reach the goal, seconds. Nav2 plans
+    # around obstacles, so journeys can be long (env: NAV2_GOAL_TIMEOUT_S).
+    goal_timeout: 300.0
 
 # Manipulation Configuration
 # Arm skills are executed by the companion MobileManipulationCore stack over a

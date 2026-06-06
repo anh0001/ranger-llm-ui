@@ -344,16 +344,28 @@ ranger-llm-ui/
 ## Available Tools
 
 ### Movement Tools
-- **MoveForward**: Move forward by specified distance (meters)
-- **MoveBackward**: Move backward by specified distance
-- **TurnAngle**: Rotate in place (positive = right, negative = left)
-- **NavigateToPose**: Navigate to a target pose
-- **StopRobot**: Emergency stop
+- **NavigateToPose**: Autonomously drive to an absolute pose (x, y, yaw) using
+  Nav2 — obstacle-aware global + local planning (the same path as RViz's "2D Nav
+  Goal"), in the `map` frame. Primary navigation tool.
+- **MoveForward**: Dead-reckon forward by specified distance (meters, relative)
+- **MoveBackward**: Dead-reckon backward by specified distance (relative)
+- **TurnAngle**: Dead-reckon rotate in place (positive = right, negative = left)
+- **MoveToPose**: Dead-reckon to an absolute goal pose (x, y, optional yaw_deg)
+  in the odometry frame (the frame reset by ZeroOdometry) via turn-drive-turn —
+  rotate to face the destination, drive straight to it, then rotate to the final
+  heading (no obstacle avoidance, no map localization)
+- **ZeroOdometry**: Reset odometry so the robot's current pose becomes (0, 0, 0)
+  by calling the robot-side relay service (`/reset_odom`, std_srvs/Trigger). The
+  relay snaps the `/odom` topic to zero at the source, setting the local
+  reference for absolute MoveToPose goals and the GetOdometry readout (does not
+  reset map/AMCL/FASTLIO localization)
+- **StopRobot**: Emergency stop (also cancels an active Nav2 goal)
 
 ### Status Tools
 - **BatteryStatus**: Get battery level and charging status
 - **SystemHealth**: Check overall system health
-- **GetOdometry**: Get current position and velocity
+- **GetOdometry**: Get current position and velocity (position/heading are
+  measured from the last ZeroOdometry origin)
 - **GetCameraImage**: Show a camera view inline in chat — `front` (forward/base
   fisheye, default), `wrist` (arm/wrist camera), or `rear` (the fixed camera
   behind the arm, read on demand via pyrealsense2). Token-optimized; see CLAUDE.md

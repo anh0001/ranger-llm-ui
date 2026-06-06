@@ -139,7 +139,11 @@ class ROSStatusInterface:
 
     def get_odometry(self) -> Optional[dict]:
         """
-        Get current odometry data.
+        Get current odometry data from the /odom topic.
+
+        The odom frame is re-zeroed at its source by the robot-side odom-reset
+        relay (the ZeroOdometry tool), so after a reset these values read ~0 at
+        the robot's location.
 
         Returns:
             Dictionary with position (x, y, z) and orientation (yaw)
@@ -155,8 +159,6 @@ class ROSStatusInterface:
 
         if self._odom is None:
             return None
-
-        import math
 
         pos = self._odom.pose.pose.position
         ori = self._odom.pose.pose.orientation

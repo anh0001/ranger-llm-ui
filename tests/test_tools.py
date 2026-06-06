@@ -5,6 +5,7 @@ These tests verify the functionality of the robot control tools
 in simulation mode (without requiring ROS 2 or actual hardware).
 """
 
+import math
 import pytest
 import time
 from unittest.mock import Mock, patch
@@ -14,6 +15,8 @@ from ranger_llm_ui.tools.movement_tools import (
     MoveForwardTool,
     MoveBackwardTool,
     TurnAngleTool,
+    MoveToPoseTool,
+    ZeroOdometryTool,
     StopRobotTool,
     get_movement_tools,
     get_ros_interface,
@@ -150,12 +153,205 @@ class TestMovementTools:
         """Test getting all movement tools."""
         tools = get_movement_tools()
 
-        assert len(tools) == 4
+        assert len(tools) == 7
         tool_names = [t.name for t in tools]
         assert "MoveForward" in tool_names
         assert "MoveBackward" in tool_names
         assert "TurnAngle" in tool_names
+        assert "MoveToPose" in tool_names
+        assert "ZeroOdometry" in tool_names
         assert "StopRobot" in tool_names
+        assert "NavigateToPose" in tool_names
+
+
+class TestMoveToPoseTool:
+    """Test suite for the absolute turn-drive-turn MoveToPose primitive.
+
+    In simulation mode the current pose is always (0, 0, 0), so absolute goals
+    here are measured from the origin; absolute planning from a non-origin pose
+    is covered by ``test_absolute_plan_from_nonzero_pose``.
+    """
+
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        """Set up test fixtures (simulation mode)."""
+        initialize_ros_interface(None)
+        guard = get_safety_guard()
+        guard.deactivate_emergency_stop()
+        guard.state.battery_level = None
+
+    def test_forward_only_drives_without_turning(self):
+        """A straight-ahead offset with no heading should be a pure drive."""
+        tool = MoveToPoseTool()
+        result = tool.run({"x": 1.0, "y": 0.0})
+
+        assert "drove 1.00 m" in result
+        assert "faced the destination" not in result
+        assert "final heading" not in result
+        assert "simulated" in result.lower()
+
+    def test_turn_drive_turn_sequence_and_directions(self):
+        """An off-axis goal with a heading runs face -> drive -> final turn."""
+        tool = MoveToPoseTool()
+        # (1, 1) is 45 deg to the left; final heading 90 deg leaves 45 deg left.
+        result = tool.run({"x": 1.0, "y": 1.0, "yaw_deg": 90.0})
+
+        assert "faced the destination (turned 45.0° left)" in result
+        assert "drove 1.41 m" in result
+        assert "turned to the final heading (turned 45.0° left)" in result
+        # Phases must be ordered face -> drive -> final heading.
+        assert result.index("faced") < result.index("drove") < result.index("final heading")
+
+    def test_right_side_target_turns_right(self):
+        """A target on the right (negative y) should turn right (CW)."""
+        tool = MoveToPoseTool()
+        result = tool.run({"x": 1.0, "y": -1.0})
+
+        assert "faced the destination (turned 45.0° right)" in result
+        assert "drove 1.41 m" in result
+
+    def test_pure_rotation_when_no_offset(self):
+        """A zero offset with a heading collapses to a single rotation."""
+        tool = MoveToPoseTool()
+        result = tool.run({"x": 0.0, "y": 0.0, "yaw_deg": 90.0})
+
+        assert "drove" not in result
+        assert "turned to the final heading (turned 90.0° left)" in result
+
+    def test_no_op_when_nothing_to_do(self):
+        """A zero offset and no heading is reported as a no-op."""
+        tool = MoveToPoseTool()
+        result = tool.run({"x": 0.0, "y": 0.0})
+
+        assert "no movement needed" in result.lower()
+
+    def test_blocks_when_emergency_stop_active(self):
+        """MoveToPose must honor the emergency-stop safety gate."""
+        guard = get_safety_guard()
+        guard.activate_emergency_stop("test")
+
+        tool = MoveToPoseTool()
+        result = tool.run({"x": 1.0, "y": 0.0})
+
+        assert "safety blocked" in result.lower()
+        assert "emergency stop" in result.lower()
+
+    def test_large_move_requires_confirmation(self):
+        """A travel distance beyond the confirmation threshold is gated."""
+        tool = MoveToPoseTool()
+        # hypot(3, 3) ~= 4.24 m, beyond the 3 m confirmation threshold.
+        result = tool.run({"x": 3.0, "y": 3.0})
+
+        assert "confirmation required" in result.lower()
+
+    def test_absolute_plan_from_nonzero_pose(self):
+        """Planning uses the supplied current pose to face/turn in absolute terms."""
+        ros = get_ros_interface()
+        # Robot at (1, 1) facing +y (90 deg); absolute goal (3, 2) facing +x (0).
+        result = ros.move_to_pose(
+            3.0, 2.0, yaw_rad=0.0, current_pose=(1.0, 1.0, math.radians(90.0))
+        )
+
+        # Bearing to goal = atan2(1, 2) = 26.6 deg; from heading 90 that is a
+        # 63.4 deg right turn. Travel = hypot(2, 1) = 2.24 m. Final turn from
+        # 26.6 deg to 0 = 26.6 deg right.
+        assert "faced the destination (turned 63.4° right)" in result
+        assert "drove 2.24 m" in result
+        assert "turned to the final heading (turned 26.6° right)" in result
+
+
+class _ImmediateFuture:
+    """A minimal rclpy-future stand-in that is already done with `result`."""
+
+    def __init__(self, result):
+        self._result = result
+
+    def add_done_callback(self, callback):
+        callback(self)
+
+    def result(self):
+        return self._result
+
+
+class TestZeroOdometry:
+    """Test suite for the service-backed ZeroOdometry tool."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        initialize_ros_interface(None)
+
+    def test_zero_odometry_tool_simulated(self):
+        """ZeroOdometry succeeds (and is reported as simulated) without ROS."""
+        result = ZeroOdometryTool().run({})
+        assert "reset" in result.lower()
+        assert "simulated" in result.lower()
+
+    def test_zero_odometry_calls_trigger_service(self):
+        """In real mode it calls /reset_odom and returns the service message."""
+        ros = get_ros_interface()
+        orig_mode = ros._simulation_mode
+        orig_client = ros._reset_odom_client
+        try:
+            ros._simulation_mode = False
+            response = Mock()
+            response.success = True
+            response.message = "Odometry zeroed at raw pose (x=1.0, y=2.0, yaw=0.5)."
+            client = Mock()
+            client.wait_for_service.return_value = True
+            client.call_async.return_value = _ImmediateFuture(response)
+            ros._reset_odom_client = client
+
+            result = ros.zero_odometry()
+
+            client.call_async.assert_called_once()
+            assert "odometry zeroed at raw pose" in result.lower()
+            assert not result.lower().startswith("error")
+        finally:
+            ros._simulation_mode = orig_mode
+            ros._reset_odom_client = orig_client
+
+    def test_zero_odometry_reports_service_unavailable(self):
+        """A missing relay service is reported as an actionable error."""
+        ros = get_ros_interface()
+        orig_mode = ros._simulation_mode
+        orig_client = ros._reset_odom_client
+        try:
+            ros._simulation_mode = False
+            client = Mock()
+            client.wait_for_service.return_value = False
+            ros._reset_odom_client = client
+
+            result = ros.zero_odometry()
+
+            assert result.lower().startswith("error")
+            assert "reset_odom" in result
+            client.call_async.assert_not_called()
+        finally:
+            ros._simulation_mode = orig_mode
+            ros._reset_odom_client = orig_client
+
+    def test_zero_odometry_failure_response(self):
+        """A success=False Trigger response is surfaced as a failure message."""
+        ros = get_ros_interface()
+        orig_mode = ros._simulation_mode
+        orig_client = ros._reset_odom_client
+        try:
+            ros._simulation_mode = False
+            response = Mock()
+            response.success = False
+            response.message = "No odometry received yet on /odom_raw."
+            client = Mock()
+            client.wait_for_service.return_value = True
+            client.call_async.return_value = _ImmediateFuture(response)
+            ros._reset_odom_client = client
+
+            result = ros.zero_odometry()
+
+            assert "failed" in result.lower()
+            assert "no odometry received yet" in result.lower()
+        finally:
+            ros._simulation_mode = orig_mode
+            ros._reset_odom_client = orig_client
 
 
 class TestStatusTools:
@@ -332,13 +528,13 @@ class TestAllTools:
     def test_get_tools_by_category(self):
         """Test getting tools by category."""
         movement_tools = get_tools_by_category("movement")
-        assert len(movement_tools) == 4
+        assert len(movement_tools) == 7
 
         status_tools = get_tools_by_category("status")
         assert len(status_tools) == 3
 
         perception_tools = get_tools_by_category("perception")
-        assert len(perception_tools) == 1
+        assert len(perception_tools) == 2
 
         with pytest.raises(ValueError):
             get_tools_by_category("invalid_category")
