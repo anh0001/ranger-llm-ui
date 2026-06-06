@@ -74,12 +74,25 @@ codes/                              # parent workspace (e.g. /home/robofi/codes)
   and visual-servo control of the arm + base (`manipulation_*` packages). It is
   **itself layered on `ranger-garden-assistant`** (which must already be running
   its complete bringup before `MobileManipulationCore`'s `core_launch.py` starts).
-- **Why this repo references it:** In the overall Ranger deployment, Ranger LLM UI
+- **Why this repo needs it:** In the overall Ranger deployment, Ranger LLM UI
   (natural-language operator interface) and `MobileManipulationCore` (manipulation
   autonomy) are sibling stacks that both run on top of the same
-  `ranger-garden-assistant` base. Pick-and-place / manipulation behaviors invoked
-  on the robot are executed by `MobileManipulationCore`; this UI's current tools
-  cover base movement, status, camera, and navigation.
+  `ranger-garden-assistant` base. This UI's **manipulation tools** (`Pick`,
+  `Place`, `PickAndPlace`, `HomeArm`, `Handover` — see
+  [Tool System](#2-tool-system)) drive MMC's skill server directly via its
+  generic `manipulation_msgs/action/ExecuteSkill` action on `/execute_skill`.
+  At runtime this requires:
+  - MMC's `manipulation_msgs` built + sourced (overlay the MMC install so
+    `from manipulation_msgs.action import ExecuteSkill` resolves), and
+  - MMC's `skill_server` running (`ros2 launch manipulation_bringup core_launch.py`,
+    which itself needs the `ranger-garden-assistant` bringup up first).
+
+  The tools fail gracefully with a clear hint when MMC is absent, and are
+  simulated in `--simple` mode. Adding a new skill on the MMC side (registering it
+  in MMC's skill registry) is automatically reachable here by name — though a
+  dedicated typed tool for it should be added in
+  [manipulation_tools.py](ranger_llm_ui/tools/manipulation_tools.py) for the LLM
+  to discover and call it.
 
 ### Layering summary
 
@@ -162,6 +175,26 @@ Tools are LangChain `BaseTool` subclasses that the agent can invoke. Tools are o
 - `SystemHealthTool` - Check system health
 - `GetOdometryTool` - Get current pose
 - `ListNodesTool` / `ListTopicsTool` - ROS 2 diagnostics
+
+**Manipulation Tools** ([manipulation_tools.py](ranger_llm_ui/tools/manipulation_tools.py)):
+Arm skills executed by the sibling **MobileManipulationCore** stack. All five
+wrap one generic ROS 2 action — `manipulation_msgs/action/ExecuteSkill` on
+`/execute_skill` — selecting the skill by name and passing args as a JSON string
+(`params_json`). One action fronts every skill, so adding a skill on the robot
+side needs no new message or rebuild here.
+- `PickTool` - grasp an object by open-vocabulary name (`pick`)
+- `PlaceTool` - release the held object onto/into a named target (`place`)
+- `PickAndPlaceTool` - localize destination first, then pick + place (`pick_and_place`)
+- `HomeArmTool` - move the arm to a named pose, `ready`/`rest` (`home`)
+- `HandoverTool` - present the held object to a person and release (`handover`)
+
+Runtime requirements (real robot only; `--simple` mode simulates them): the MMC
+`manipulation_msgs` package must be built + sourced (overlay the MMC workspace),
+and its `skill_server` must be running (`ros2 launch manipulation_bringup
+core_launch.py`). The tools degrade gracefully (clear error / log hint) when MMC
+is absent. Disable entirely with `ENABLE_MANIPULATION_TOOLS=false`; override the
+action name with `EXECUTE_SKILL_ACTION`. See
+[Robot Stack Dependencies](#robot-stack-dependencies-sibling-repositories).
 
 **Tool Registry** ([all_tools.py](ranger_llm_ui/tools/all_tools.py)):
 - Central registry for all tools

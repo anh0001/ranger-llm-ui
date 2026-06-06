@@ -79,6 +79,26 @@ ros:
   # Timeout waiting for action server to become available (seconds)
   action_server_timeout: 5.0
 
+# Manipulation Configuration
+# Arm skills are executed by the companion MobileManipulationCore stack over a
+# single generic ROS 2 action (manipulation_msgs/action/ExecuteSkill). Requires
+# that stack's manipulation_msgs to be built+sourced and its skill_server
+# running (ros2 launch manipulation_bringup core_launch.py).
+# Repo: https://github.com/anh0001/MobileManipulationCore
+manipulation:
+  # Enable the manipulation skill tools (Pick, Place, PickAndPlace, HomeArm,
+  # Handover). Set false on a base-only robot with no arm.
+  # Env override: ENABLE_MANIPULATION_TOOLS
+  enabled: true
+
+  # Action name the skill server advertises (env override: EXECUTE_SKILL_ACTION)
+  execute_skill_action: /execute_skill
+
+  # Default client-side ceiling (seconds) to wait for a skill result when the
+  # caller gives no per-skill timeout (env override: SKILL_GOAL_TIMEOUT_S).
+  # Manipulation skills are slow (detect -> align -> grasp -> lift).
+  skill_goal_timeout: 300.0
+
 # Camera Configuration
 camera:
   # Image resolution for LLM consumption (reduced defaults for token efficiency)

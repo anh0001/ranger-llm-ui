@@ -72,7 +72,10 @@ SAFETY-CRITICAL INSTRUCTIONS - ALWAYS FOLLOW:
    other diagnostic tool first. The movement tools handle all ROS 2 action
    server communication internally — no pre-checks are needed or wanted.
    Similarly, for status queries use BatteryStatus, SystemHealth, or
-   GetOdometry directly without running diagnostics first.
+   GetOdometry directly without running diagnostics first. For manipulation
+   requests (pick up / place / hand over / park the arm) call the matching
+   skill tool (Pick, Place, PickAndPlace, HomeArm, Handover) directly — these
+   wrap the /execute_skill action and need no diagnostics first.
 
 4. TOOL USAGE: Only use the tools provided to you. If asked to do something
    without a corresponding tool, explain what you CAN do instead.
@@ -114,6 +117,8 @@ Your ROS 2 system runs on the robot's onboard computer. You communicate via:
 - /battery_state topic for battery status
 - /camera/image_raw topic for camera images (or configured camera topic;
   includes the wrist-mounted arm camera when available)
+- /execute_skill action for arm manipulation skills (pick, place, pick_and_place,
+  home, handover) — served by the MobileManipulationCore skill server
 - Various other sensor and diagnostic topics
 """.strip(),
 
@@ -145,6 +150,29 @@ command in robot-body frame, AND NavigateToPose does not fit:
 
 SAFETY:
 - StopRobot: Immediately halt all movement and cancel any active goals.
+
+MANIPULATION CAPABILITIES (arm skills via the MobileManipulationCore skill
+server; each runs the wrist-camera detect -> align -> grasp pipeline):
+- Pick(object, timeout_sec?): grasp one object by open-vocabulary name
+  ("pick up the bread", "grab the red apple"). Succeeds only if the object is
+  actually held after the lift; an empty grasp is reported as a failure.
+- Place(target, timeout_sec?): release the object I am holding into/onto a named
+  receptacle ("put it in the box"). RUN ONLY AFTER a successful Pick.
+- PickAndPlace(object, destination, timeout_sec?): pick an object and place it at
+  a destination in one call ("put the banana in the white box"). The destination
+  is localized first while my gripper is empty, so PREFER THIS over separate
+  Pick + Place whenever both object and destination are known.
+- HomeArm(pose?, time_sec?): move my arm to a named pose — 'ready' (look-down
+  capture pose, before a pick) or 'rest' (folded/parked). Use to reset or park
+  the arm between tasks.
+- Handover(dwell_sec?, posture?, timeout_sec?): hand the object I am holding to a
+  person — detect them, present the object, dwell, then open the gripper. RUN
+  ONLY AFTER a successful Pick. Aborts if no clear single person is seen or they
+  are too close/far.
+Notes: these are high-level skills — call them directly for manipulation
+requests; do NOT run diagnostics first. Place and Handover require that a prior
+Pick succeeded (I must be holding something). If a Pick reports an empty grasp,
+do not proceed to Place/Handover — tell the operator and optionally retry.
 
 STATUS CAPABILITIES:
 - BatteryStatus: Check current battery level and charging state

@@ -1,117 +1,130 @@
 {
+    // All environment plumbing lives in scripts/dev.sh — these tasks are thin
+    // wrappers so they stay readable and consistent. Run any of them from the
+    // Command Palette: "Tasks: Run Task".
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "Build ranger_llm_msgs",
+            "label": "Build",
+            "detail": "colcon build ranger_llm_msgs + ranger_llm_ui",
             "type": "shell",
-            "command": "bash",
-            "args": [
-                "-c",
-                "export PYTHONUSERBASE=\"${env:HOME}/.local/ranger_llm_ui_py310\" && colcon build --paths . ranger_llm_msgs --packages-select ranger_llm_msgs"
-            ],
+            "command": "${workspaceFolder}/scripts/dev.sh",
+            "args": ["build"],
+            "group": { "kind": "build", "isDefault": true },
+            "problemMatcher": [],
+            "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+        },
+        {
+            "label": "Build: messages only",
+            "detail": "colcon build only the ranger_llm_msgs action interfaces",
+            "type": "shell",
+            "command": "${workspaceFolder}/scripts/dev.sh",
+            "args": ["build-msgs"],
             "group": "build",
-            "problemMatcher": [
-                "$gcc"
-            ],
-            "presentation": {
-                "reveal": "always",
-                "panel": "shared"
-            }
+            "problemMatcher": [],
+            "presentation": { "reveal": "always", "panel": "shared" }
         },
         {
-            "label": "Build with colcon",
+            "label": "Clean build artifacts",
+            "detail": "Remove build/ install/ log/",
             "type": "shell",
-            "command": "bash",
-            "args": [
-                "-c",
-                "export PYTHONUSERBASE=\"${env:HOME}/.local/ranger_llm_ui_py310\" && colcon build --paths . ranger_llm_msgs --packages-select ranger_llm_msgs ranger_llm_ui"
-            ],
-            "group": {
-                "kind": "build",
-                "isDefault": true
-            },
-            "problemMatcher": [
-                "$gcc"
-            ],
-            "presentation": {
-                "reveal": "always",
-                "panel": "shared"
-            }
+            "command": "${workspaceFolder}/scripts/dev.sh",
+            "args": ["clean"],
+            "group": "build",
+            "problemMatcher": [],
+            "presentation": { "reveal": "always", "panel": "shared" }
         },
         {
-            "label": "Launch Ranger LLM UI",
+            "label": "Run: simple (no ROS, no LLM)",
+            "detail": "Fastest smoke test — SimpleAgent, no ROS 2, no LLM. UI at http://localhost:7860",
             "type": "shell",
-            "command": "bash",
-            "args": [
-                "-c",
-                "set -a && source .env && set +a && export PYTHONUSERBASE=\"${env:HOME}/.local/ranger_llm_ui_py310\" && export PYTHONPATH=\"${env:HOME}/.local/ranger_llm_ui_py310/lib/python3.10/site-packages:$PYTHONPATH\" && export LD_LIBRARY_PATH=\"$PYTHONUSERBASE/lib/python3.10/site-packages/nvidia/cu12/lib:$LD_LIBRARY_PATH\" && source ./install/setup.bash && ros2 launch ranger_llm_ui ranger_llm_ui.launch.py"
-            ],
-            "group": "none",
-            "dependsOn": "Build with colcon",
-            "isBackground": true,
-            "problemMatcher": []
-        },
-        {
-            "label": "Start CLIProxyAPI (Claude OAuth)",
-            "detail": "Starts CLIProxyAPI on :8317 wrapping Claude Pro/Max OAuth as an Anthropic-compatible HTTP endpoint. One-time login via './cli-proxy-api -claude-login -no-browser -config config.yaml' before first run.",
-            "type": "shell",
-            "command": "bash",
-            "args": [
-                "-c",
-                "cd ${env:HOME}/tools/cliproxyapi && pkill -x cli-proxy-api 2>/dev/null; sleep 1; ./cli-proxy-api -config config.yaml 2>&1 | tee /tmp/cliproxy.log"
-            ],
-            "group": "none",
+            "command": "${workspaceFolder}/scripts/dev.sh",
+            "args": ["run", "--simple"],
             "isBackground": true,
             "problemMatcher": [],
-            "presentation": {
-                "reveal": "always",
-                "panel": "dedicated",
-                "group": "ranger-runtime"
-            }
+            "presentation": { "reveal": "always", "panel": "dedicated", "group": "ranger-runtime" }
         },
         {
-            "label": "Launch Ranger LLM UI (claude_proxy, simulation)",
-            "detail": "Launches the Gradio UI with provider=claude_proxy using Claude Pro/Max via CLIProxyAPI. Run 'Start CLIProxyAPI' first.",
+            "label": "Run: UI (pick provider, no ROS)",
+            "detail": "Run the Gradio UI with a real LLM but no ROS 2 (tools simulated). Prompts for provider + model.",
             "type": "shell",
-            "command": "bash",
-            "args": [
-                "-c",
-                "set -a && source .env && set +a && export PYTHONUSERBASE=\"${env:HOME}/.local/ranger_llm_ui_py310\" && export PYTHONPATH=\"${env:HOME}/.local/ranger_llm_ui_py310/lib/python3.10/site-packages:$PYTHONPATH\" && export LD_LIBRARY_PATH=\"$PYTHONUSERBASE/lib/python3.10/site-packages/nvidia/cu12/lib:$LD_LIBRARY_PATH\" && export WHISPER_MODEL=${WHISPER_MODEL:-base.en} && export LLM_PROVIDER=claude_proxy && export LLM_MODEL=${LLM_MODEL:-sonnet-4.6} && python -m ranger_llm_ui.ui_node --provider claude_proxy --model ${LLM_MODEL:-sonnet-4.6}"
-            ],
-            "group": "none",
+            "command": "${workspaceFolder}/scripts/dev.sh",
+            "args": ["run", "--provider", "${input:provider}", "--model", "${input:model}"],
             "isBackground": true,
             "problemMatcher": [],
-            "presentation": {
-                "reveal": "always",
-                "panel": "dedicated",
-                "group": "ranger-runtime"
-            }
+            "presentation": { "reveal": "always", "panel": "dedicated", "group": "ranger-runtime" }
         },
         {
-            "label": "Run claude_proxy stack (proxy + UI)",
-            "detail": "Convenience: starts CLIProxyAPI and the Ranger UI side-by-side in dedicated panels.",
-            "dependsOn": [
-                "Start CLIProxyAPI (Claude OAuth)",
-                "Launch Ranger LLM UI (claude_proxy, simulation)"
-            ],
+            "label": "Run: UI with ROS 2",
+            "detail": "Build, then ros2 launch the UI with full ROS 2 integration.",
+            "type": "shell",
+            "command": "${workspaceFolder}/scripts/dev.sh",
+            "args": ["run-ros"],
+            "dependsOn": "Build",
+            "isBackground": true,
+            "problemMatcher": [],
+            "presentation": { "reveal": "always", "panel": "dedicated", "group": "ranger-runtime" }
+        },
+        {
+            "label": "Test (pytest)",
+            "detail": "Run the pytest suite",
+            "type": "shell",
+            "command": "${workspaceFolder}/scripts/dev.sh",
+            "args": ["test"],
+            "group": { "kind": "test", "isDefault": true },
+            "problemMatcher": [],
+            "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+        },
+        {
+            "label": "CLIProxyAPI: start",
+            "detail": "Start CLIProxyAPI on :8317 (Claude Pro/Max OAuth -> Anthropic HTTP). Set CLIPROXY_DIR if not in ~/tools/cliproxyapi.",
+            "type": "shell",
+            "command": "${workspaceFolder}/scripts/dev.sh",
+            "args": ["proxy"],
+            "isBackground": true,
+            "problemMatcher": [],
+            "presentation": { "reveal": "always", "panel": "dedicated", "group": "ranger-runtime" }
+        },
+        {
+            "label": "CLIProxyAPI: login (one-time)",
+            "detail": "Authenticate CLIProxyAPI with your Claude Pro/Max subscription. Follow the printed SSH-tunnel + browser steps.",
+            "type": "shell",
+            "command": "${workspaceFolder}/scripts/dev.sh",
+            "args": ["proxy-login"],
+            "problemMatcher": [],
+            "presentation": { "reveal": "always", "panel": "dedicated" }
+        },
+        {
+            "label": "Run: UI (claude_proxy)",
+            "detail": "Run the UI against CLIProxyAPI (provider=claude_proxy). Start 'CLIProxyAPI: start' first.",
+            "type": "shell",
+            "command": "${workspaceFolder}/scripts/dev.sh",
+            "args": ["run", "--provider", "claude_proxy", "--model", "${input:model}"],
+            "isBackground": true,
+            "problemMatcher": [],
+            "presentation": { "reveal": "always", "panel": "dedicated", "group": "ranger-runtime" }
+        },
+        {
+            "label": "Run: claude_proxy stack (proxy + UI)",
+            "detail": "Start CLIProxyAPI and the UI side-by-side in dedicated panels.",
+            "dependsOn": ["CLIProxyAPI: start", "Run: UI (claude_proxy)"],
             "dependsOrder": "parallel",
             "problemMatcher": []
+        }
+    ],
+    "inputs": [
+        {
+            "id": "provider",
+            "type": "pickString",
+            "description": "LLM provider",
+            "default": "openai",
+            "options": ["openai", "ollama", "anthropic", "claude_code", "claude_proxy"]
         },
         {
-            "label": "CLIProxyAPI: Claude OAuth Login (one-time)",
-            "detail": "Run once to authenticate CLIProxyAPI with your Claude Pro/Max subscription. Follow the printed SSH-tunnel + browser instructions.",
-            "type": "shell",
-            "command": "bash",
-            "args": [
-                "-c",
-                "cd ${env:HOME}/tools/cliproxyapi && ./cli-proxy-api -claude-login -no-browser -config config.yaml"
-            ],
-            "group": "none",
-            "problemMatcher": [],
-            "presentation": {
-                "reveal": "always",
-                "panel": "dedicated"
-            }
+            "id": "model",
+            "type": "promptString",
+            "description": "Model name (leave blank for provider default; e.g. gpt-4o-mini, sonnet-4.6, opus)",
+            "default": ""
         }
     ]
 }

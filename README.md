@@ -358,6 +358,22 @@ ranger-llm-ui/
 - **ListNodes**: List active ROS 2 nodes
 - **ListTopics**: List active ROS 2 topics
 
+### Manipulation Tools (arm)
+Executed by the companion [MobileManipulationCore](https://github.com/anh0001/MobileManipulationCore)
+skill server over a single ROS 2 action (`manipulation_msgs/action/ExecuteSkill`
+on `/execute_skill`):
+- **Pick**: Grasp an object by open-vocabulary name (e.g. "pick up the bread")
+- **Place**: Release the held object onto/into a named target (run after Pick)
+- **PickAndPlace**: Pick an object and place it at a destination in one call
+- **HomeArm**: Move the arm to a named pose (`ready` or `rest`)
+- **Handover**: Hand the held object to a person, then open the gripper
+
+> Requires the MobileManipulationCore stack: build + source its `manipulation_msgs`
+> and run its `skill_server` (`ros2 launch manipulation_bringup core_launch.py`,
+> on top of the `ranger-garden-assistant` base bringup). The tools are simulated
+> in `--simple` mode and fail gracefully (with a hint) if the stack is absent.
+> Disable with `ENABLE_MANIPULATION_TOOLS=false`; remap with `EXECUTE_SKILL_ACTION`.
+
 ## Safety Features
 
 1. **Velocity Limits**: All velocities are clamped to safe maximums
@@ -400,6 +416,7 @@ mypy ranger_llm_ui/
 - [ ] Enhanced telemetry dashboard
 
 ### Future
+- [x] Arm manipulation skills (Pick/Place/Handover via MobileManipulationCore)
 - [ ] Nav2 navigation integration
 - [ ] Learning from corrections
 

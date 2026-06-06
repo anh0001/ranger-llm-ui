@@ -533,10 +533,14 @@ class RangerAgent:
         from ranger_llm_ui.tools.movement_tools import initialize_ros_interface
         from ranger_llm_ui.tools.status_tools import initialize_status_interface
         from ranger_llm_ui.tools.camera_tools import initialize_camera_interface
+        from ranger_llm_ui.tools.manipulation_tools import (
+            initialize_manipulation_interface,
+        )
 
         initialize_ros_interface(ros_node)
         initialize_status_interface(ros_node)
         initialize_camera_interface(ros_node)
+        initialize_manipulation_interface(ros_node)
 
     def invoke(self, user_input: str) -> dict:
         """

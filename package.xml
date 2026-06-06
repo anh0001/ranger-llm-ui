@@ -16,6 +16,17 @@
   <depend>nav_msgs</depend>
   <depend>ranger_llm_msgs</depend>
 
+  <!--
+    Manipulation skills (Pick/Place/Handover/...) use
+    manipulation_msgs/action/ExecuteSkill from the sibling MobileManipulationCore
+    workspace (https://github.com/anh0001/MobileManipulationCore). It is overlaid
+    at runtime, not built here, so it is intentionally NOT listed as an
+    <exec_depend> (that would make `rosdep install` fail to resolve the key).
+    Source the MobileManipulationCore install on top of this workspace to enable
+    the manipulation tools; they degrade gracefully (and log a hint) if it is
+    absent. Override the action name with EXECUTE_SKILL_ACTION if remapped.
+  -->
+
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
   <test_depend>ament_pep257</test_depend>

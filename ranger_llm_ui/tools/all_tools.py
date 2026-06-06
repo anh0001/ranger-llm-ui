@@ -3,9 +3,11 @@ Tool Registry - Consolidates all tools for the LangChain agent.
 
 This module provides a central registry of all available tools for the
 Ranger robot agent. Tools are categorized by function:
-- Movement tools: MoveForward, MoveBackward, TurnAngle, StopRobot
+- Movement tools: MoveForward, MoveBackward, TurnAngle, StopRobot, NavigateToPose
 - Status tools: BatteryStatus, SystemHealth, GetOdometry, ListNodes, ListTopics
 - Perception tools: GetCameraImage
+- Manipulation tools: Pick, Place, PickAndPlace, HomeArm, Handover
+  (via the MobileManipulationCore skill server; see manipulation_tools.py)
 
 The agent's prompt will be configured to only use these tools for execution.
 If the user asks for something outside this scope, the agent should refuse
@@ -40,8 +42,26 @@ from ranger_llm_ui.tools.camera_tools import (
     get_camera_tools,
     initialize_camera_interface,
 )
+from ranger_llm_ui.tools.manipulation_tools import (
+    PickTool,
+    PlaceTool,
+    PickAndPlaceTool,
+    HomeArmTool,
+    HandoverTool,
+    get_manipulation_tools,
+    initialize_manipulation_interface,
+)
 
 logger = logging.getLogger(__name__)
+
+# Manipulation tools wrap the MobileManipulationCore skill server. They are
+# included by default but can be disabled (e.g. on a base-only robot with no
+# arm) by setting ENABLE_MANIPULATION_TOOLS=false.
+import os
+
+MANIPULATION_TOOLS_ENABLED = os.getenv(
+    "ENABLE_MANIPULATION_TOOLS", "true"
+).lower() in ("1", "true", "yes")
 
 
 # Tool categories for organization and documentation
@@ -62,6 +82,13 @@ TOOL_CATEGORIES = {
         "description": "Tools for camera and perception data",
         "tools": ["GetCameraImage"],
     },
+    "manipulation": {
+        "description": (
+            "Tools for arm manipulation via the MobileManipulationCore skill "
+            "server (/execute_skill)"
+        ),
+        "tools": ["Pick", "Place", "PickAndPlace", "HomeArm", "Handover"],
+    },
 }
 
 
@@ -70,6 +97,7 @@ def get_all_tools(
     include_status: bool = True,
     include_diagnostics: bool = True,
     include_perception: bool = True,
+    include_manipulation: Optional[bool] = None,
 ) -> list[BaseTool]:
     """
     Get all registered tools for the agent.
@@ -78,10 +106,17 @@ def get_all_tools(
         include_movement: Include movement tools (MoveForward, etc.)
         include_status: Include status tools (BatteryStatus, etc.)
         include_diagnostics: Include diagnostic tools (ListNodes, etc.)
+        include_perception: Include perception tools (GetCameraImage)
+        include_manipulation: Include manipulation/skill tools (Pick, Place,
+            PickAndPlace, HomeArm, Handover). Defaults to the
+            ENABLE_MANIPULATION_TOOLS env flag (on unless set to false).
 
     Returns:
         List of BaseTool instances
     """
+    if include_manipulation is None:
+        include_manipulation = MANIPULATION_TOOLS_ENABLED
+
     tools: list[BaseTool] = []
 
     if include_movement:
@@ -111,6 +146,15 @@ def get_all_tools(
             GetCameraImageTool(),
         ])
 
+    if include_manipulation:
+        tools.extend([
+            PickTool(),
+            PlaceTool(),
+            PickAndPlaceTool(),
+            HomeArmTool(),
+            HandoverTool(),
+        ])
+
     logger.info(f"Loaded {len(tools)} tools: {[t.name for t in tools]}")
     return tools
 
@@ -136,6 +180,8 @@ def get_tools_by_category(category: str) -> list[BaseTool]:
         return [ListNodesTool(), ListTopicsTool()]
     elif category == "perception":
         return get_camera_tools()
+    elif category == "manipulation":
+        return get_manipulation_tools()
     else:
         return []
 
@@ -157,6 +203,7 @@ def initialize_all_tools(node: Optional[Any] = None) -> list[BaseTool]:
     initialize_ros_interface(node)
     initialize_status_interface(node)
     initialize_camera_interface(node)
+    initialize_manipulation_interface(node)
 
     # Return all tools
     return get_all_tools()
