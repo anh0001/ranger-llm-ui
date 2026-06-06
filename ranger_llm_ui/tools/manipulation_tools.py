@@ -15,7 +15,8 @@ wrapped by this module mirror MobileManipulationCore's skill registry:
     pick            - grasp an object by open-vocabulary name (wrist camera)
     place           - release the held object into/onto a named receptacle
     pick_and_place  - localize destination first, then pick, then place
-    home            - move the arm to a named pose ('ready' / 'rest')
+    arm_home_pose   - park the arm at a named pose ('rest' / 'ready')
+    arm_ready_pose  - raise the arm to the look-down 'ready' capture pose
     handover        - present the held object to a person and release it
 
 Runtime requirements (real robot only; --simple mode simulates these tools):
@@ -305,7 +306,7 @@ class ManipulationInterface:
         Send an ExecuteSkill goal and block until the skill completes.
 
         Args:
-            skill: registered skill name (e.g. "pick", "place", "home").
+            skill: registered skill name (e.g. "pick", "place", "arm_home_pose").
             params: skill arguments; serialized to the goal's params_json.
             timeout_s: max seconds to wait for the result before giving up.
 
@@ -475,12 +476,23 @@ class PickAndPlaceInput(BaseModel):
 class HomeArmInput(BaseModel):
     """Input schema for the HomeArm tool."""
     pose: str = Field(
-        default="ready",
+        default="rest",
         description=(
-            "Named arm pose: 'ready' (look-down capture pose, used before a "
-            "pick) or 'rest' (folds the arm to all-zero joints / park)."
+            "Named arm pose: 'rest' (default; folds the arm to all-zero joints "
+            "/ park, lifting the wrist clear of the LiDAR first) or 'ready' "
+            "(look-down capture pose used before a pick — prefer the ReadyArm "
+            "tool for that)."
         ),
     )
+    time_sec: float = Field(
+        default=5.0,
+        gt=0.0,
+        description="Seconds to take for the move.",
+    )
+
+
+class ReadyArmInput(BaseModel):
+    """Input schema for the ReadyArm tool."""
     time_sec: float = Field(
         default=5.0,
         gt=0.0,
@@ -675,21 +687,23 @@ class PickAndPlaceTool(_SkillToolBase):
 
 
 class HomeArmTool(_SkillToolBase):
-    """Move the arm to a named pose ('ready' or 'rest')."""
+    """Park the arm at a named home pose ('rest' or 'ready')."""
 
     name: str = "HomeArm"
-    skill_name: str = "home"
+    skill_name: str = "arm_home_pose"
     description: str = (
-        "Move the robot arm to a named joint pose. 'ready' is the look-down "
-        "capture pose used before a pick; 'rest' folds the arm to all-zero "
-        "joints (park). Use to reset the arm between tasks or park it safely. "
-        "Input: pose ('ready' or 'rest'), optional time_sec."
+        "Move the robot arm to a named home/park pose. Defaults to 'rest', the "
+        "all-zero joint pose — folding to it first lifts the wrist up to clear "
+        "the Mid-360 LiDAR. Use it to park the arm safely between tasks. 'ready' "
+        "(the look-down capture pose used before a pick) is also selectable, but "
+        "PREFER the dedicated ReadyArm tool for that. Input: pose ('rest' or "
+        "'ready'), optional time_sec."
     )
     args_schema: Type[BaseModel] = HomeArmInput
 
     def _run(
         self,
-        pose: str = "ready",
+        pose: str = "rest",
         time_sec: float = 5.0,
         run_manager: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
@@ -700,6 +714,34 @@ class HomeArmTool(_SkillToolBase):
             params,
             timeout_s=timeout_s,
             log_params={"pose": pose, "time_sec": time_sec},
+        )
+
+
+class ReadyArmTool(_SkillToolBase):
+    """Raise the arm to the look-down 'ready' capture pose."""
+
+    name: str = "ReadyArm"
+    skill_name: str = "arm_ready_pose"
+    description: str = (
+        "Move the robot arm to the 'ready' pose: the look-down capture pose used "
+        "before a pick. Use it to raise the arm from rest/zero into a working "
+        "configuration. The pose stays in sync with the pick/handover skills. "
+        "Input: optional time_sec."
+    )
+    args_schema: Type[BaseModel] = ReadyArmInput
+
+    def _run(
+        self,
+        time_sec: float = 5.0,
+        run_manager: Optional[CallbackManagerForToolRun] = None,
+    ) -> str:
+        params: Dict[str, Any] = {"time_sec": float(time_sec)}
+        # ready is a quick single move; wait a bit beyond the requested time.
+        timeout_s = max(30.0, float(time_sec) + 20.0)
+        return self._dispatch(
+            params,
+            timeout_s=timeout_s,
+            log_params={"time_sec": time_sec},
         )
 
 
@@ -750,5 +792,6 @@ def get_manipulation_tools() -> list[BaseTool]:
         PlaceTool(),
         PickAndPlaceTool(),
         HomeArmTool(),
+        ReadyArmTool(),
         HandoverTool(),
     ]

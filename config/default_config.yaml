@@ -87,7 +87,7 @@ ros:
 # Repo: https://github.com/anh0001/MobileManipulationCore
 manipulation:
   # Enable the manipulation skill tools (Pick, Place, PickAndPlace, HomeArm,
-  # Handover). Set false on a base-only robot with no arm.
+  # ReadyArm, Handover). Set false on a base-only robot with no arm.
   # Env override: ENABLE_MANIPULATION_TOOLS
   enabled: true
 
@@ -113,8 +113,36 @@ camera:
   # JPEG is strongly recommended to reduce token usage by 85-92%
   format: jpeg
 
-  # Default camera topic
+  # Default camera topic (the 'front' camera). Env: CAMERA_TOPIC
   topic: /camera/image_raw
+
+  # Named cameras the agent selects with GetCameraImage(camera="..."):
+  #   front - forward/base Tier IV C2-176 fisheye (ROS topic above).
+  #           Env: CAMERA_TOPIC
+  #   wrist - Intel RealSense D405 on the arm wrist (ROS topic).
+  #           Env: CAMERA_WRIST_TOPIC
+  #           default: /piper/wrist_camera/piper_d405/color/image_raw
+  #   rear  - Intel RealSense D435i mounted BEHIND the arm. NOT a ROS stream:
+  #           grabbed on demand by serial with pyrealsense2 (like the MMC
+  #           handover skill), then released. pyrealsense2 is an optional,
+  #           hardware-only dependency; if it/the device is missing the tool
+  #           fails gracefully. Envs: CAMERA_REAR_SERIAL (default 243722070013),
+  #           CAMERA_REAR_WIDTH/HEIGHT/FPS, CAMERA_REAR_WARMUP_FRAMES,
+  #           CAMERA_REAR_TIMEOUT_SEC, and CAMERA_REALSENSE_EXTRA_SITE (point at
+  #           a user site-packages dir if pyrealsense2 isn't importable under the
+  #           ROS env's PYTHONNOUSERSITE).
+  # Override the default view with CAMERA_DEFAULT (front|wrist|rear).
+
+  # Describe the captured frame in the chat (instead of a plain caption). Because
+  # GetCameraImage renders the image directly to the UI (return_direct), the
+  # agent never "sees" it; so the tool makes ONE short vision call on the
+  # downscaled frame using the agent's configured LLM and uses the result as the
+  # caption above the image. Disable to skip that call (a plain caption is used).
+  #   CAMERA_DESCRIBE        - true|false (default true)
+  #   CAMERA_DESCRIBE_PROMPT - instruction for the description ({camera} is filled
+  #                            in); first-person default ("I can see ...").
+  # Needs a vision-capable provider/model (OpenAI gpt-4o, Anthropic Claude, etc.);
+  # falls back to a plain caption (image still shown) if vision is unavailable.
 
 # Logging Configuration
 logging:

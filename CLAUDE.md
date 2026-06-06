@@ -78,7 +78,7 @@ codes/                              # parent workspace (e.g. /home/robofi/codes)
   (natural-language operator interface) and `MobileManipulationCore` (manipulation
   autonomy) are sibling stacks that both run on top of the same
   `ranger-garden-assistant` base. This UI's **manipulation tools** (`Pick`,
-  `Place`, `PickAndPlace`, `HomeArm`, `Handover` — see
+  `Place`, `PickAndPlace`, `HomeArm`, `ReadyArm`, `Handover` — see
   [Tool System](#2-tool-system)) drive MMC's skill server directly via its
   generic `manipulation_msgs/action/ExecuteSkill` action on `/execute_skill`.
   At runtime this requires:
@@ -185,7 +185,8 @@ side needs no new message or rebuild here.
 - `PickTool` - grasp an object by open-vocabulary name (`pick`)
 - `PlaceTool` - release the held object onto/into a named target (`place`)
 - `PickAndPlaceTool` - localize destination first, then pick + place (`pick_and_place`)
-- `HomeArmTool` - move the arm to a named pose, `ready`/`rest` (`home`)
+- `HomeArmTool` - park the arm at a named home pose, `rest`/`ready` (`arm_home_pose`)
+- `ReadyArmTool` - raise the arm to the look-down `ready` capture pose (`arm_ready_pose`)
 - `HandoverTool` - present the held object to a person and release (`handover`)
 
 Runtime requirements (real robot only; `--simple` mode simulates them): the MMC
@@ -271,6 +272,32 @@ Configuration via environment variables or [default_config.yaml](config/default_
 ### 6. Camera Image Token Optimization
 
 The `GetCameraImageTool` allows the agent to retrieve camera images, but images can consume significant tokens in the LLM context. The system includes optimizations to reduce token usage by 85-92%.
+
+**Named cameras (`camera` arg):** `GetCameraImage` selects a view by friendly
+name — `front` (forward/base Tier IV fisheye, default), `wrist` (the RealSense
+D405 on the arm — "show the wrist cam"), or `rear` (the fixed RealSense D435i
+mounted behind the arm). The reduced-resolution snapshot renders inline in the
+Gradio chat (the tool returns a Markdown `data:` URI with `return_direct=True`).
+`front`/`wrist` are ROS topics; **`rear` is deliberately NOT wired to ROS** — it
+is grabbed on demand by serial with `pyrealsense2` (mirroring MMC's handover
+skill: open → warm up → one color frame → close), so `pyrealsense2` is an
+optional, hardware-only dependency and the tool fails gracefully if it or the
+device is absent. Topics/serial and capture params are env-overridable
+(`CAMERA_WRIST_TOPIC`, `CAMERA_REAR_SERIAL`, `CAMERA_DEFAULT`, etc.); see the
+`camera:` block in [default_config.yaml](config/default_config.yaml) and
+[camera_tools.py](ranger_llm_ui/tools/camera_tools.py).
+
+**Image description (caption).** Because `return_direct=True` ends the agent turn
+before the model sees the frame, the tool captions the image with a short
+natural-language **description** instead of technical metadata: it makes one
+quick vision call on the already-downscaled frame using the agent's configured
+LLM (wired via `set_describe_llm()` in `agent_interface.py`) and renders that as
+the line above the image. Toggle with `CAMERA_DESCRIBE` (default on) and
+`CAMERA_DESCRIBE_PROMPT`. It degrades gracefully to a plain caption (image still
+shown) when no vision-capable LLM is available. `pyrealsense2` for the rear
+camera is auto-discovered in `~/.local/lib/pythonX.Y/site-packages` when the UI
+runs under a separate `PYTHONUSERBASE` (override with
+`CAMERA_REALSENSE_EXTRA_SITE`).
 
 **Token Usage Comparison:**
 

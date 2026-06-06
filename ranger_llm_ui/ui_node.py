@@ -649,6 +649,9 @@ class RangerUINode:
                             - `CAMERA_IMAGE_MAX_HEIGHT`: Image height (default: 240)
                             - `CAMERA_IMAGE_QUALITY`: JPEG quality (default: 75)
                             - `CAMERA_IMAGE_FORMAT`: jpeg or png (default: jpeg)
+                            - Named views (ask "show the wrist cam" / "rear camera"):
+                              `front` (default), `wrist`, `rear` (fixed D435i behind the arm).
+                              `CAMERA_DEFAULT`, `CAMERA_WRIST_TOPIC`, `CAMERA_REAR_SERIAL`
                             """)
 
             # Event handler for model selection

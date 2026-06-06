@@ -354,7 +354,9 @@ ranger-llm-ui/
 - **BatteryStatus**: Get battery level and charging status
 - **SystemHealth**: Check overall system health
 - **GetOdometry**: Get current position and velocity
-- **GetCameraImage**: Capture a camera image (token-optimized; see CLAUDE.md)
+- **GetCameraImage**: Show a camera view inline in chat — `front` (forward/base
+  fisheye, default), `wrist` (arm/wrist camera), or `rear` (the fixed camera
+  behind the arm, read on demand via pyrealsense2). Token-optimized; see CLAUDE.md
 - **ListNodes**: List active ROS 2 nodes
 - **ListTopics**: List active ROS 2 topics
 
@@ -365,7 +367,8 @@ on `/execute_skill`):
 - **Pick**: Grasp an object by open-vocabulary name (e.g. "pick up the bread")
 - **Place**: Release the held object onto/into a named target (run after Pick)
 - **PickAndPlace**: Pick an object and place it at a destination in one call
-- **HomeArm**: Move the arm to a named pose (`ready` or `rest`)
+- **HomeArm**: Park the arm at a named home pose (`rest` default, or `ready`)
+- **ReadyArm**: Raise the arm to the look-down `ready` capture pose (before a pick)
 - **Handover**: Hand the held object to a person, then open the gripper
 
 > Requires the MobileManipulationCore stack: its `manipulation_msgs` overlay must

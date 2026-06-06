@@ -443,6 +443,16 @@ class RangerAgent:
                 streaming=streaming,
             )
 
+        # Let the camera tool reuse this LLM to describe captured frames (the
+        # GetCameraImage tool is return_direct, so the agent never sees the image
+        # itself — it makes a short vision call to caption it). Best-effort.
+        try:
+            from ranger_llm_ui.tools.camera_tools import set_describe_llm
+
+            set_describe_llm(llm)
+        except Exception as e:  # pragma: no cover - non-fatal wiring
+            logger.debug(f"Could not wire camera describe LLM: {e}")
+
         # Get Ranger-specific tools as LangChain tools
         ranger_tools = self._wrap_tools(get_all_tools())
 

@@ -9,6 +9,7 @@ import base64
 import io
 import logging
 import os
+import sys
 import threading
 import time
 from typing import Optional, Type, Any
@@ -35,11 +36,39 @@ except ImportError:
     logger.warning("ROS 2 (rclpy) not available. Running in simulation mode.")
 
 
+# --------------------------------------------------------------------------- #
+# Named cameras
+#
+# The Ranger + PiPER arm carry three physical cameras. The agent selects one by
+# friendly name (the GetCameraImage 'camera' arg); each name maps to a capture
+# source:
+#   front  - Tier IV C2-176 fisheye, the forward/base camera. ROS topic.
+#   wrist  - Intel RealSense D405 on the arm wrist. ROS topic (served by the
+#            ranger-garden-assistant realsense node).
+#   rear   - Intel RealSense D435i mounted BEHIND the arm. This one is NOT a ROS
+#            node (only the wrist D405 streams over ROS); it is a free USB device
+#            grabbed on demand by serial with pyrealsense2, then closed — exactly
+#            like MobileManipulationCore's handover skill. See
+#            _capture_realsense_rgb(). We deliberately do NOT wire it to ROS.
+# Each source/topic/serial is overridable by env var so a relocated camera needs
+# no code change.
+# --------------------------------------------------------------------------- #
 DEFAULT_CAMERA_TOPIC = "/camera/image_raw"
+DEFAULT_WRIST_TOPIC = "/piper/wrist_camera/piper_d405/color/image_raw"
+DEFAULT_REAR_SERIAL = "243722070013"  # the D435i behind the arm (MMC handover cam)
+
+# Friendly aliases the LLM might say -> canonical camera name.
+_CAMERA_ALIASES = {
+    "base": "front", "main": "front", "default": "front", "fisheye": "front",
+    "forward": "front", "nav": "front", "navigation": "front",
+    "arm": "wrist", "hand": "wrist", "gripper": "wrist", "d405": "wrist",
+    "back": "rear", "behind": "rear", "fixed": "rear", "handover": "rear",
+    "d435": "rear", "d435i": "rear",
+}
 
 
 def _get_camera_config():
-    """Get camera configuration from environment variables."""
+    """Get image-encoding configuration from environment variables."""
     return {
         "max_width": int(os.getenv("CAMERA_IMAGE_MAX_WIDTH", "320")),
         "max_height": int(os.getenv("CAMERA_IMAGE_MAX_HEIGHT", "240")),
@@ -47,6 +76,277 @@ def _get_camera_config():
         "format": os.getenv("CAMERA_IMAGE_FORMAT", "jpeg").lower(),
         "topic": os.getenv("CAMERA_TOPIC", DEFAULT_CAMERA_TOPIC),
     }
+
+
+def _get_named_cameras() -> dict:
+    """Named cameras the agent can select by name (each source env-overridable)."""
+    return {
+        "front": {"source": "ros",
+                  "topic": os.getenv("CAMERA_TOPIC", DEFAULT_CAMERA_TOPIC)},
+        "wrist": {"source": "ros",
+                  "topic": os.getenv("CAMERA_WRIST_TOPIC", DEFAULT_WRIST_TOPIC)},
+        "rear": {"source": "realsense",
+                 "serial": os.getenv("CAMERA_REAR_SERIAL", DEFAULT_REAR_SERIAL)},
+    }
+
+
+def _default_camera_name() -> str:
+    name = os.getenv("CAMERA_DEFAULT", "front").strip().lower()
+    name = _CAMERA_ALIASES.get(name, name)
+    return name if name in _get_named_cameras() else "front"
+
+
+def _resolve_camera(camera: Optional[str], topic: Optional[str]) -> dict:
+    """Resolve the requested camera into a capture spec.
+
+    Precedence: an explicit ROS ``topic`` wins (back-compat); otherwise a friendly
+    ``camera`` name is looked up in the named-camera registry; otherwise the
+    default camera (``CAMERA_DEFAULT`` or 'front') is used. An unknown name that
+    looks like a ROS topic ('/...') is used directly; any other unknown name falls
+    back to the default camera. The returned spec always has 'name', 'source', a
+    human-readable 'label', and either 'topic' (ros) or 'serial' (realsense).
+    """
+    cameras = _get_named_cameras()
+
+    if topic:
+        spec = {"name": topic, "source": "ros", "topic": topic}
+    else:
+        raw = (camera or _default_camera_name()).strip()
+        key = _CAMERA_ALIASES.get(raw.lower(), raw.lower())
+        if key in cameras:
+            spec = {"name": key, **cameras[key]}
+        elif raw.startswith("/"):
+            spec = {"name": raw, "source": "ros", "topic": raw}
+        else:
+            key = _default_camera_name()
+            spec = {"name": key, **cameras[key]}
+
+    if spec["source"] == "realsense":
+        spec["label"] = (f"RealSense D435i behind the arm, "
+                         f"serial {spec.get('serial', '')}")
+    else:
+        spec["label"] = spec.get("topic", spec["name"])
+    return spec
+
+
+def _make_sim_image(label: str) -> np.ndarray:
+    """Build a labeled placeholder frame (used when no live stream is available)."""
+    width, height = 640, 480
+    image = Image.new("RGB", (width, height), (24, 28, 32))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle([16, 16, width - 16, height - 16], outline=(80, 90, 100), width=2)
+    draw.text((32, 32), "Simulation Camera", fill=(210, 210, 210))
+    draw.text((32, 56), label, fill=(170, 170, 170))
+    draw.text((32, 80), "No live image stream available", fill=(140, 140, 140))
+    return np.array(image)
+
+
+# --------------------------------------------------------------------------- #
+# On-demand RealSense capture (the fixed D435i mounted behind the arm)
+#
+# This camera is intentionally NOT wired to ROS. We open it by serial with
+# pyrealsense2, drop a few warm-up frames so auto-exposure settles, grab ONE
+# color frame, and close the device — no node, no topic, no continuous stream.
+# Mirrors MobileManipulationCore's handover skill (skills/handover_skill.py:
+# _grab_once / _reset_device). pyrealsense2 is an optional, hardware-only
+# dependency: if it (or the device) is missing the tool degrades gracefully with
+# a clear hint rather than crashing.
+# --------------------------------------------------------------------------- #
+# The D435i is single-owner; serialize opens so a UI snapshot can't race a manual
+# refresh (or, worst case, an MMC handover) trying to open it at the same moment.
+_realsense_lock = threading.Lock()
+
+
+def _default_realsense_extra_site() -> str:
+    """Find a site-packages holding pyrealsense2 if it isn't already importable.
+
+    The UI commonly runs under a dedicated PYTHONUSERBASE that does NOT contain
+    pyrealsense2, while the package is installed in the standard per-user site
+    (~/.local/lib/pythonX.Y/site-packages) — the very path MMC's handover skill
+    points at. Honor CAMERA_REALSENSE_EXTRA_SITE first; otherwise auto-probe that
+    standard user site so the rear camera works without any env wiring.
+    """
+    explicit = os.getenv("CAMERA_REALSENSE_EXTRA_SITE", "").strip()
+    if explicit:
+        return explicit
+    pyver = f"python{sys.version_info.major}.{sys.version_info.minor}"
+    candidate = os.path.expanduser(f"~/.local/lib/{pyver}/site-packages")
+    if os.path.isdir(os.path.join(candidate, "pyrealsense2")):
+        return candidate
+    return ""
+
+
+def _get_realsense_config() -> dict:
+    """Capture params for the on-demand RealSense grab (env-overridable)."""
+    return {
+        "width": int(os.getenv("CAMERA_REAR_WIDTH", "640")),
+        "height": int(os.getenv("CAMERA_REAR_HEIGHT", "480")),
+        "fps": int(os.getenv("CAMERA_REAR_FPS", "30")),
+        "warmup": int(os.getenv("CAMERA_REAR_WARMUP_FRAMES", "12")),
+        "timeout_sec": float(os.getenv("CAMERA_REAR_TIMEOUT_SEC", "5.0")),
+        # pyrealsense2 may live in a different site-packages than the UI's
+        # PYTHONUSERBASE (Jetson runs the ROS env with PYTHONNOUSERSITE=1). Auto-
+        # discovered; override with CAMERA_REALSENSE_EXTRA_SITE.
+        "extra_site": _default_realsense_extra_site(),
+    }
+
+
+def _lazy_import(name: str, extra_site: str = ""):
+    """Import a runtime-only dep, falling back to an extra site-packages path.
+
+    numpy is already loaded by the time this runs, so appending the user site at
+    runtime exposes pyrealsense2 WITHOUT swapping the loaded numpy. A plain import
+    when ``extra_site`` is empty or the module is already importable.
+    """
+    try:
+        return __import__(name)
+    except ImportError:
+        if not extra_site:
+            raise
+        if extra_site not in sys.path:
+            sys.path.append(extra_site)
+        return __import__(name)
+
+
+def _reset_realsense_device(rs, serial: str) -> None:
+    """Hardware-reset the D435i to recover its no-frames USB state (best effort)."""
+    try:
+        for d in rs.context().query_devices():
+            if d.get_info(rs.camera_info.serial_number) == str(serial):
+                d.hardware_reset()
+                return
+    except Exception:  # reset is a recovery attempt; never mask the real error
+        pass
+
+
+def _capture_realsense_rgb(
+    serial: str,
+    width: int = 640,
+    height: int = 480,
+    fps: int = 30,
+    warmup: int = 12,
+    timeout_sec: float = 5.0,
+    extra_site: str = "",
+    retries: int = 2,
+    reset_on_fail: bool = True,
+    reset_wait_sec: float = 7.0,
+) -> Optional[np.ndarray]:
+    """Grab one color frame from a RealSense device by serial; return RGB uint8.
+
+    Returns an (H,W,3) RGB uint8 array, or None if the device yields no color
+    frame. Raises ImportError if pyrealsense2 is unavailable, or RuntimeError if
+    every attempt times out / the device is busy. The D435i can drop into a
+    no-frames state under rapid open/close cycling, so a failed grab is retried:
+    a cheap re-open first, then a hardware reset (a known RealSense USB quirk).
+    """
+    rs = _lazy_import("pyrealsense2", extra_site)  # hardware-only dep; lazy
+
+    def _grab_once() -> Optional[np.ndarray]:
+        pipeline = rs.pipeline()
+        config = rs.config()
+        if serial:
+            config.enable_device(str(serial))
+        config.enable_stream(rs.stream.color, int(width), int(height),
+                             rs.format.bgr8, int(fps))
+        pipeline.start(config)
+        try:
+            timeout_ms = max(1000, int(timeout_sec * 1000))
+            frames = None
+            for _ in range(max(1, int(warmup))):  # drop frames so AE settles
+                frames = pipeline.wait_for_frames(timeout_ms)
+            color_frame = frames.get_color_frame() if frames else None
+            if not color_frame:
+                return None
+            color_bgr = np.asanyarray(color_frame.get_data())  # H,W,3 BGR uint8
+            return np.ascontiguousarray(color_bgr[..., ::-1])  # BGR -> RGB
+        finally:
+            pipeline.stop()
+
+    with _realsense_lock:
+        last_err: Optional[Exception] = None
+        for attempt in range(int(retries) + 1):
+            try:
+                return _grab_once()
+            except RuntimeError as e:  # frame timeout, device busy, ...
+                last_err = e
+                if attempt >= int(retries):
+                    break
+                # Escalate: cheap re-open first, hardware reset on later retries.
+                if reset_on_fail and serial and attempt >= 1:
+                    _reset_realsense_device(rs, serial)
+                    time.sleep(float(reset_wait_sec))  # USB re-enumeration
+                else:
+                    time.sleep(1.5)
+        raise last_err if last_err else RuntimeError("RealSense capture failed")
+
+
+# --------------------------------------------------------------------------- #
+# Optional image description
+#
+# GetCameraImage uses return_direct=True, so the captured frame is handed
+# straight to the UI and the agent loop ends — the agent's own model never sees
+# the picture. To answer "describe what you see", the tool makes ONE short vision
+# call on the (already downscaled) frame using the agent's configured LLM, and
+# uses that description as the caption above the inline image. Disable with
+# CAMERA_DESCRIBE=false; customize the instruction with CAMERA_DESCRIBE_PROMPT.
+# Best-effort: if no LLM is registered or the provider/model can't do vision, the
+# tool falls back to a plain caption (and still shows the image).
+# --------------------------------------------------------------------------- #
+_describe_llm: Optional[Any] = None
+
+DEFAULT_DESCRIBE_PROMPT = (
+    "You are the robot looking through your {camera} camera. In 1-2 short "
+    "sentences, describe what you see from your own first-person point of view "
+    "(start with 'I can see'). Be concrete and factual; do not mention pixels, "
+    "tokens, files, resolution, or that this is an image."
+)
+
+
+def set_describe_llm(llm: Any) -> None:
+    """Register the (vision-capable) LLM the camera tool uses to describe frames."""
+    global _describe_llm
+    _describe_llm = llm
+
+
+def _describe_enabled() -> bool:
+    return os.getenv("CAMERA_DESCRIBE", "true").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _describe_image(data_url: str, camera_name: str) -> Optional[str]:
+    """Return a short natural-language description of the frame, or None.
+
+    None means "no description available" — the caller falls back to a plain
+    caption. Never raises: a model/provider without vision just yields None.
+    """
+    if _describe_llm is None or not _describe_enabled():
+        return None
+    prompt = os.getenv("CAMERA_DESCRIBE_PROMPT", DEFAULT_DESCRIBE_PROMPT)
+    try:
+        prompt = prompt.format(camera=camera_name)
+    except Exception:  # a custom prompt without the {camera} field is fine
+        pass
+    try:
+        from langchain_core.messages import HumanMessage
+
+        msg = HumanMessage(content=[
+            {"type": "text", "text": prompt},
+            {"type": "image_url", "image_url": {"url": data_url}},
+        ])
+        resp = _describe_llm.invoke([msg])
+        text = getattr(resp, "content", resp)
+        if isinstance(text, list):  # some providers return a list of content blocks
+            text = " ".join(
+                b.get("text", "") if isinstance(b, dict) else str(b) for b in text
+            )
+        text = (text or "").strip()
+        return text or None
+    except Exception as e:
+        logger.warning(
+            "Camera image description failed (%s); using a plain caption.", e
+        )
+        return None
 
 
 class ROSCameraInterface:
@@ -262,15 +562,7 @@ class ROSCameraInterface:
         if self._sim_image is not None and self._sim_image_topic == self._topic:
             return self._sim_image
 
-        width, height = 640, 480
-        image = Image.new("RGB", (width, height), (24, 28, 32))
-        draw = ImageDraw.Draw(image)
-        draw.rectangle([16, 16, width - 16, height - 16], outline=(80, 90, 100), width=2)
-        draw.text((32, 32), "Simulation Camera", fill=(210, 210, 210))
-        draw.text((32, 56), f"Topic: {self._topic}", fill=(170, 170, 170))
-        draw.text((32, 80), "No ROS 2 image stream available", fill=(140, 140, 140))
-
-        self._sim_image = np.array(image)
+        self._sim_image = _make_sim_image(f"Topic: {self._topic}")
         self._sim_image_topic = self._topic
         return self._sim_image
 
@@ -337,9 +629,22 @@ class CameraImageInput(BaseModel):
     variables or config file will be used (320x240 JPEG quality=75).
     """
 
+    camera: Optional[str] = Field(
+        default=None,
+        description=(
+            "Which camera to view, by name: 'front' (the forward/base fisheye, "
+            "the default), 'wrist' (the arm/wrist camera — use this for 'wrist "
+            "cam' / 'arm camera' requests), or 'rear' (the fixed camera mounted "
+            "behind the arm). If omitted, the default ('front') camera is used."
+        ),
+    )
     topic: Optional[str] = Field(
         default=None,
-        description="Optional ROS 2 camera topic to read from (sensor_msgs/Image). If not specified, uses default topic.",
+        description=(
+            "Advanced: an explicit ROS 2 camera topic (sensor_msgs/Image) to read "
+            "from, overriding 'camera'. Leave unset and use 'camera' for the "
+            "named views."
+        ),
     )
     max_width: Optional[int] = Field(
         default=None,
@@ -370,16 +675,19 @@ class GetCameraImageTool(BaseTool):
 
     name: str = "GetCameraImage"
     description: str = (
-        "Get the latest camera image from the robot's camera topic. "
-        "Use this when you need a current camera snapshot. "
-        "All parameters are optional - defaults will be used if not specified. "
-        "Returns a base64-encoded image embedded in markdown."
+        "Get the latest camera image from one of the robot's cameras and show it "
+        "in the chat. Pick the view with 'camera': 'front' (forward/base fisheye, "
+        "default), 'wrist' (the arm/wrist camera — use for 'show the wrist cam'), "
+        "or 'rear' (the fixed camera behind the arm). Use this whenever the "
+        "operator asks to see a camera. All parameters are optional. Returns a "
+        "reduced-resolution image embedded in markdown."
     )
     args_schema: Type[BaseModel] = CameraImageInput
     return_direct: bool = True
 
     def _run(
         self,
+        camera: Optional[str] = None,
         topic: Optional[str] = None,
         max_width: Optional[int] = None,
         max_height: Optional[int] = None,
@@ -387,7 +695,7 @@ class GetCameraImageTool(BaseTool):
         format: Optional[str] = None,
         run_manager: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
-        """Fetch the latest camera image and return it as Markdown."""
+        """Fetch the latest image from the selected camera and return it as Markdown."""
         start_time = time.time()
 
         # Get defaults from config if not provided
@@ -397,18 +705,65 @@ class GetCameraImageTool(BaseTool):
         quality = quality if quality is not None else config["quality"]
         format = format if format is not None else config["format"]
 
+        spec = _resolve_camera(camera, topic)
+        label = spec["label"]
         interface = get_camera_interface()
-        if topic:
-            interface.set_topic(topic)
+        log_params = {
+            "camera": camera, "topic": topic, "resolved": spec["name"],
+            "source": spec["source"], "max_width": max_width,
+            "max_height": max_height, "quality": quality, "format": format,
+        }
 
-        image = interface.get_latest_image()
+        # ---- acquire one frame from the resolved source --------------------
+        try:
+            if interface.simulation_mode:
+                # No live streams in --simple mode: labeled placeholder per camera.
+                image = _make_sim_image(label)
+            elif spec["source"] == "realsense":
+                # The fixed D435i behind the arm: grabbed on demand, not via ROS.
+                image = _capture_realsense_rgb(
+                    serial=spec.get("serial", ""), **_get_realsense_config()
+                )
+            else:  # ROS topic (front / wrist / explicit topic)
+                changed = interface.topic != spec["topic"]
+                interface.set_topic(spec["topic"])
+                image = interface.get_latest_image()
+                if image is None and changed:
+                    # Subscription was just (re)created; give the first frame a
+                    # moment to arrive so a camera switch works on the first try.
+                    deadline = time.time() + float(
+                        os.getenv("CAMERA_SWITCH_WAIT_SEC", "3.0")
+                    )
+                    while image is None and time.time() < deadline:
+                        time.sleep(0.1)
+                        image = interface.get_latest_image()
+        except Exception as e:
+            result = f"Failed to capture the '{spec['name']}' camera ({label}): {e}"
+            if spec["source"] == "realsense":
+                result += (
+                    " — the rear D435i is read on demand via pyrealsense2 (it is "
+                    "not a ROS stream). Ensure pyrealsense2 is installed, the "
+                    f"device (serial {spec.get('serial', '')}) is connected and "
+                    "not already in use, or set CAMERA_REAR_SERIAL / "
+                    "CAMERA_REALSENSE_EXTRA_SITE."
+                )
+            log_tool_call(
+                tool_name=self.name, parameters=log_params, result=result,
+                success=False, error=str(e),
+                execution_time_ms=(time.time() - start_time) * 1000,
+            )
+            return result
 
         if image is None:
-            result = f"No camera image available yet on {interface.topic}."
+            if spec["source"] == "realsense":
+                result = (
+                    f"No image from the '{spec['name']}' camera ({label}); the "
+                    "D435i returned no color frame."
+                )
+            else:
+                result = f"No camera image available yet on {spec.get('topic', label)}."
             log_tool_call(
-                tool_name=self.name,
-                parameters={"topic": topic, "max_width": max_width, "max_height": max_height, "quality": quality, "format": format},
-                result=result,
+                tool_name=self.name, parameters=log_params, result=result,
                 success=False,
                 execution_time_ms=(time.time() - start_time) * 1000,
             )
@@ -435,21 +790,27 @@ class GetCameraImageTool(BaseTool):
             estimated_tokens = int(len(encoded) / 4)  # Rough estimate: 4 bytes ≈ 1 token
 
             data_url = f"data:{mime_type};base64,{encoded}"
-            result = (
-                f"Camera image from {interface.topic} ({pil_image.width}x{pil_image.height}, "
-                f"{img_format.upper()}, ~{estimated_tokens:,} tokens).\n\n"
-                f"![Camera Image]({data_url})"
-            )
+
+            # Caption: a natural-language description of what the camera sees
+            # (the agent never sees the frame itself — return_direct ends the
+            # turn). Falls back to a plain caption when description is off/
+            # unavailable. The technical details (topic, size, tokens) stay in
+            # the logs, out of the operator's chat.
+            description = _describe_image(data_url, spec["name"])
+            caption = description or f"Here is my {spec['name']} camera view."
+            result = f"{caption}\n\n![Camera Image]({data_url})"
 
             logger.info(
-                f"Camera image encoded: {pil_image.width}x{pil_image.height} {img_format.upper()}, "
-                f"size={encoded_size_kb:.1f}KB, est_tokens={estimated_tokens:,}"
+                f"Camera image encoded: camera={spec['name']} ({label}) "
+                f"{pil_image.width}x{pil_image.height} {img_format.upper()}, "
+                f"size={encoded_size_kb:.1f}KB, est_tokens={estimated_tokens:,}, "
+                f"described={'yes' if description else 'no'}"
             )
 
             log_tool_call(
                 tool_name=self.name,
-                parameters={"topic": topic, "max_width": max_width, "max_height": max_height, "quality": quality, "format": format},
-                result=f"Camera image captured ({pil_image.width}x{pil_image.height}, {img_format.upper()}, ~{estimated_tokens:,} tokens)",
+                parameters=log_params,
+                result=f"Camera image captured from {spec['name']} ({pil_image.width}x{pil_image.height}, {img_format.upper()}, ~{estimated_tokens:,} tokens)",
                 success=True,
                 execution_time_ms=(time.time() - start_time) * 1000,
             )
@@ -458,7 +819,7 @@ class GetCameraImageTool(BaseTool):
             result = f"Failed to render camera image: {e}"
             log_tool_call(
                 tool_name=self.name,
-                parameters={"topic": topic, "max_width": max_width, "max_height": max_height, "quality": quality, "format": format},
+                parameters=log_params,
                 result=result,
                 success=False,
                 error=str(e),

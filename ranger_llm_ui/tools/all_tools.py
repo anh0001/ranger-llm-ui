@@ -6,7 +6,7 @@ Ranger robot agent. Tools are categorized by function:
 - Movement tools: MoveForward, MoveBackward, TurnAngle, StopRobot, NavigateToPose
 - Status tools: BatteryStatus, SystemHealth, GetOdometry, ListNodes, ListTopics
 - Perception tools: GetCameraImage
-- Manipulation tools: Pick, Place, PickAndPlace, HomeArm, Handover
+- Manipulation tools: Pick, Place, PickAndPlace, HomeArm, ReadyArm, Handover
   (via the MobileManipulationCore skill server; see manipulation_tools.py)
 
 The agent's prompt will be configured to only use these tools for execution.
@@ -47,6 +47,7 @@ from ranger_llm_ui.tools.manipulation_tools import (
     PlaceTool,
     PickAndPlaceTool,
     HomeArmTool,
+    ReadyArmTool,
     HandoverTool,
     get_manipulation_tools,
     initialize_manipulation_interface,
@@ -87,7 +88,7 @@ TOOL_CATEGORIES = {
             "Tools for arm manipulation via the MobileManipulationCore skill "
             "server (/execute_skill)"
         ),
-        "tools": ["Pick", "Place", "PickAndPlace", "HomeArm", "Handover"],
+        "tools": ["Pick", "Place", "PickAndPlace", "HomeArm", "ReadyArm", "Handover"],
     },
 }
 
@@ -108,7 +109,7 @@ def get_all_tools(
         include_diagnostics: Include diagnostic tools (ListNodes, etc.)
         include_perception: Include perception tools (GetCameraImage)
         include_manipulation: Include manipulation/skill tools (Pick, Place,
-            PickAndPlace, HomeArm, Handover). Defaults to the
+            PickAndPlace, HomeArm, ReadyArm, Handover). Defaults to the
             ENABLE_MANIPULATION_TOOLS env flag (on unless set to false).
 
     Returns:
@@ -152,6 +153,7 @@ def get_all_tools(
             PlaceTool(),
             PickAndPlaceTool(),
             HomeArmTool(),
+            ReadyArmTool(),
             HandoverTool(),
         ])
 
