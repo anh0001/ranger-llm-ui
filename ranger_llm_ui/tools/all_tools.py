@@ -46,6 +46,9 @@ from ranger_llm_ui.tools.manipulation_tools import (
     PickTool,
     PlaceTool,
     PickAndPlaceTool,
+    PickAtTool,
+    PlaceAtTool,
+    PickAndPlaceAtTool,
     HomeArmTool,
     ReadyArmTool,
     HandoverTool,
@@ -90,7 +93,10 @@ TOOL_CATEGORIES = {
             "Tools for arm manipulation via the MobileManipulationCore skill "
             "server (/execute_skill)"
         ),
-        "tools": ["Pick", "Place", "PickAndPlace", "HomeArm", "ReadyArm", "Handover"],
+        "tools": [
+            "Pick", "Place", "PickAndPlace", "PickAt", "PlaceAt", "PickAndPlaceAt",
+            "HomeArm", "ReadyArm", "Handover",
+        ],
     },
 }
 
@@ -155,6 +161,9 @@ def get_all_tools(
             PickTool(),
             PlaceTool(),
             PickAndPlaceTool(),
+            PickAtTool(),
+            PlaceAtTool(),
+            PickAndPlaceAtTool(),
             HomeArmTool(),
             ReadyArmTool(),
             HandoverTool(),

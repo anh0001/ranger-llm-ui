@@ -165,6 +165,20 @@ server; each runs the wrist-camera detect -> align -> grasp pipeline):
   a destination in one call ("put the banana in the white box"). The destination
   is localized first while my gripper is empty, so PREFER THIS over separate
   Pick + Place whenever both object and destination are known.
+
+POSITION-BASED MANIPULATION (act at a GIVEN 3D point — no detection; CHAIN with
+LocateObject). Use these when you already have a coordinate (e.g. from LocateObject)
+or the operator gives one. They TRUST the point — only act on a LocateObject result
+or a measured coordinate, never a guessed one. All points are (x, y, z) in metres in
+base_footprint (x forward, y left, z up):
+- PickAt(x, y, z, frame?): open the gripper, descend onto the point, and grasp it.
+  Typical flow: LocateObject('banana','wrist') -> read its x/y/z -> PickAt(x, y, z).
+- PlaceAt(x, y, z, frame?): release the object I am holding at the point. RUN ONLY
+  AFTER a successful Pick/PickAt.
+- PickAndPlaceAt(pick_x, pick_y, pick_z, place_x, place_y, place_z, frame?): grasp at
+  one point and release at another in one call.
+Prefer the detection-based Pick/Place/PickAndPlace when I only have an object NAME;
+use the *At variants when I have a 3D POSITION.
 - HomeArm(pose?, time_sec?): park my arm at a named home pose — 'rest' (default;
   folded/parked at all-zero joints, lifting the wrist clear of the LiDAR first)
   or 'ready' (look-down capture pose). Use to park the arm safely between tasks;

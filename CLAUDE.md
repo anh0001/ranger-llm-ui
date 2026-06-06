@@ -191,6 +191,19 @@ side needs no new message or rebuild here.
 - `ReadyArmTool` - raise the arm to the look-down `ready` capture pose (`arm_ready_pose`)
 - `HandoverTool` - present the held object to a person and release (`handover`)
 
+Position-based variants — act at a GIVEN 3D point (no detection), for chaining
+after `LocateObject`. They drive the visual servo's external-target mode
+(`use_external_target` + `external_grasp_target`/`external_pregrasp_target`, in
+the arm base frame `piper_base_link`); the UI tools accept `x, y, z` (+ `frame`,
+default `base_footprint`) and the skills transform via TF. `pick_at` opens the
+gripper itself (the external path bypasses the detection pipeline's OPEN_GRIPPER).
+There is no detection/plane-fit — the coordinate is trusted (a light plausibility
+gate + the node's reach guard are the only checks), so feed a `LocateObject` or
+measured point.
+- `PickAtTool` - open gripper, descend onto a point, grasp (`pick_at`)
+- `PlaceAtTool` - release the held object at a point (`place_at`; needs a prior pick)
+- `PickAndPlaceAtTool` - grasp at one point, release at another (`pick_and_place_at`)
+
 Runtime requirements (real robot only; `--simple` mode simulates them): the MMC
 `manipulation_msgs` package must be built + sourced (overlay the MMC workspace),
 and its `skill_server` must be running (`ros2 launch manipulation_bringup

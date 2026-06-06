@@ -565,6 +565,43 @@ class HandoverInput(BaseModel):
     )
 
 
+class PickAtInput(BaseModel):
+    """Input schema for the PickAt tool."""
+    x: float = Field(description="X (forward, metres) of the grasp point.")
+    y: float = Field(description="Y (left, metres) of the grasp point.")
+    z: float = Field(description="Z (up, metres) of the grasp point.")
+    frame: str = Field(
+        default="base_footprint",
+        description="TF frame of the point (default base_footprint — e.g. a point "
+                    "from LocateObject).",
+    )
+
+
+class PlaceAtInput(BaseModel):
+    """Input schema for the PlaceAt tool."""
+    x: float = Field(description="X (forward, metres) of the release point.")
+    y: float = Field(description="Y (left, metres) of the release point.")
+    z: float = Field(description="Z (up, metres) of the release point.")
+    frame: str = Field(
+        default="base_footprint",
+        description="TF frame of the point (default base_footprint).",
+    )
+
+
+class PickAndPlaceAtInput(BaseModel):
+    """Input schema for the PickAndPlaceAt tool."""
+    pick_x: float = Field(description="X (forward, m) of the grasp point.")
+    pick_y: float = Field(description="Y (left, m) of the grasp point.")
+    pick_z: float = Field(description="Z (up, m) of the grasp point.")
+    place_x: float = Field(description="X (forward, m) of the release point.")
+    place_y: float = Field(description="Y (left, m) of the release point.")
+    place_z: float = Field(description="Z (up, m) of the release point.")
+    frame: str = Field(
+        default="base_footprint",
+        description="TF frame of both points (default base_footprint).",
+    )
+
+
 class LocateObjectInput(BaseModel):
     """Input schema for the LocateObject tool."""
     objects: str = Field(
@@ -893,6 +930,78 @@ class HandoverTool(_SkillToolBase):
         )
 
 
+class PickAtTool(_SkillToolBase):
+    """Grasp at a given 3D point (no detection)."""
+
+    name: str = "PickAt"
+    skill_name: str = "pick_at"
+    description: str = (
+        "Grasp at a GIVEN 3D point with the arm — no detection. I open the gripper, "
+        "descend onto the point from a standoff above it, and close. The point is "
+        "(x, y, z) in metres in base_footprint by default (x forward, y left, z up) "
+        "— typically a point from LocateObject. CHAIN: call LocateObject first to "
+        "get the object's position, then PickAt with that x/y/z. I trust the "
+        "coordinate (no detection), so only use a point from LocateObject or a "
+        "measured one. Succeeds only if something is actually held after the lift. "
+        "Input: x, y, z, optional frame."
+    )
+    args_schema: Type[BaseModel] = PickAtInput
+
+    def _run(self, x: float, y: float, z: float, frame: str = "base_footprint",
+             run_manager: Optional[CallbackManagerForToolRun] = None) -> str:
+        params: Dict[str, Any] = {
+            "position": [float(x), float(y), float(z)], "frame": frame}
+        return self._dispatch(params, timeout_s=_skill_timeout(0.0), log_params=params)
+
+
+class PlaceAtTool(_SkillToolBase):
+    """Release the held object at a given 3D point (no detection)."""
+
+    name: str = "PlaceAt"
+    skill_name: str = "place_at"
+    description: str = (
+        "Release the object I am holding at a GIVEN 3D point — no detection. I "
+        "approach a standoff above the point and open the gripper to drop the "
+        "object there. The point is (x, y, z) in metres in base_footprint by "
+        "default. RUN ONLY AFTER a successful Pick or PickAt (I must be holding "
+        "something). Input: x, y, z, optional frame."
+    )
+    args_schema: Type[BaseModel] = PlaceAtInput
+
+    def _run(self, x: float, y: float, z: float, frame: str = "base_footprint",
+             run_manager: Optional[CallbackManagerForToolRun] = None) -> str:
+        params: Dict[str, Any] = {
+            "position": [float(x), float(y), float(z)], "frame": frame}
+        return self._dispatch(params, timeout_s=_skill_timeout(0.0), log_params=params)
+
+
+class PickAndPlaceAtTool(_SkillToolBase):
+    """Grasp at one given 3D point and release at another (no detection)."""
+
+    name: str = "PickAndPlaceAt"
+    skill_name: str = "pick_and_place_at"
+    description: str = (
+        "Grasp at one GIVEN 3D point and release at another — no detection. I pick "
+        "at (pick_x, pick_y, pick_z), lift, then release at (place_x, place_y, "
+        "place_z). All in metres in base_footprint by default. Use when I already "
+        "know both coordinates (e.g. from LocateObject). Input: pick_x/y/z, "
+        "place_x/y/z, optional frame."
+    )
+    args_schema: Type[BaseModel] = PickAndPlaceAtInput
+
+    def _run(self, pick_x: float, pick_y: float, pick_z: float,
+             place_x: float, place_y: float, place_z: float,
+             frame: str = "base_footprint",
+             run_manager: Optional[CallbackManagerForToolRun] = None) -> str:
+        params: Dict[str, Any] = {
+            "pick_position": [float(pick_x), float(pick_y), float(pick_z)],
+            "place_position": [float(place_x), float(place_y), float(place_z)],
+            "frame": frame,
+        }
+        return self._dispatch(
+            params, timeout_s=_skill_timeout(0.0, phases=2), log_params=params)
+
+
 class LocateObjectTool(_SkillToolBase):
     """Report the 3D position of named objects relative to base_footprint.
 
@@ -979,6 +1088,9 @@ def get_manipulation_tools() -> list[BaseTool]:
         PickTool(),
         PlaceTool(),
         PickAndPlaceTool(),
+        PickAtTool(),
+        PlaceAtTool(),
+        PickAndPlaceAtTool(),
         HomeArmTool(),
         ReadyArmTool(),
         HandoverTool(),
