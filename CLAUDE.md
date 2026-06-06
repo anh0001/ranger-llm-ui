@@ -78,7 +78,9 @@ codes/                              # parent workspace (e.g. /home/robofi/codes)
   (natural-language operator interface) and `MobileManipulationCore` (manipulation
   autonomy) are sibling stacks that both run on top of the same
   `ranger-garden-assistant` base. This UI's **manipulation tools** (`Pick`,
-  `Place`, `PickAndPlace`, `HomeArm`, `ReadyArm`, `Handover` — see
+  `Place`, `PickAndPlace`, `HomeArm`, `ReadyArm`, `Handover`) and its
+  object-localization **perception tool** (`LocateObject`, backed by MMC's
+  `localize_object` skill — 3D position of named objects) — see
   [Tool System](#2-tool-system)) drive MMC's skill server directly via its
   generic `manipulation_msgs/action/ExecuteSkill` action on `/execute_skill`.
   At runtime this requires:
@@ -196,6 +198,30 @@ core_launch.py`). The tools degrade gracefully (clear error / log hint) when MMC
 is absent. Disable entirely with `ENABLE_MANIPULATION_TOOLS=false`; override the
 action name with `EXECUTE_SKILL_ACTION`. See
 [Robot Stack Dependencies](#robot-stack-dependencies-sibling-repositories).
+
+**Object Localization Tool** ([manipulation_tools.py](ranger_llm_ui/tools/manipulation_tools.py)):
+- `LocateObjectTool` (tool name `LocateObject`) - report the **3D position of one
+  or more named objects** relative to `base_footprint`. This is OBJECT
+  localization ("where is the banana?"), deliberately kept distinct from robot
+  self/navigation localization ("where am I?", which is AMCL/FASTLIO — use
+  `GetOdometry` for the robot's own pose). It is a *perception* tool but is
+  skill-backed: it drives MMC's `localize_object` skill over the same
+  `/execute_skill` action, then parses the returned poses (via
+  `execute_skill_detailed`) and formats them. Input: `objects` (comma-separated
+  open-vocabulary labels) and `camera` (`wrist` or `rear`).
+- The `localize_object` skill (MMC:
+  `manipulation_policy/skills/localize_object_skill.py`) runs one pipeline:
+  open-vocabulary detect (the existing Grounding DINO HTTP service) → robust
+  median depth → pinhole deproject → lift into `base_footprint`. The **wrist**
+  D405 path uses ROS topics + a **live TF** lookup (accurate; the object must be
+  in the wrist camera's view, so `ReadyArm` first). The **rear** D435i has no ROS
+  node/TF, so (like `handover`) it is grabbed on demand by `pyrealsense2` and
+  lifted with a **manual extrinsic** that must be calibrated in
+  `config/localize_object_params.yaml` (results flag rear coords as approximate
+  until `localize_rear_calibrated: true`). An optional, gated Claude vision
+  fallback (`localize_vlm_fallback` + `ANTHROPIC_API_KEY`) supplies a pixel when
+  the detector finds nothing. Requires the same MMC skill_server + the Grounding
+  DINO detector; simulated in `--simple` mode.
 
 **Tool Registry** ([all_tools.py](ranger_llm_ui/tools/all_tools.py)):
 - Central registry for all tools

@@ -313,7 +313,50 @@ class ManipulationInterface:
         Returns:
             (success, message): the authoritative outcome boolean (from the
             action result, or False for any client-side error/timeout) and a
-            human-readable status string for the operator/LLM.
+            human-readable status string for the operator/LLM. Any structured
+            result_json is appended inline as "(details: ...)".
+        """
+        success, message, raw = self._send_and_wait(skill, params, timeout_s)
+        details = (raw or "").strip()
+        if details and details not in ("{}", "null"):
+            message += f" (details: {details})"
+        return success, message
+
+    def execute_skill_detailed(
+        self,
+        skill: str,
+        params: Optional[Dict[str, Any]] = None,
+        timeout_s: float = SKILL_GOAL_TIMEOUT_S,
+    ) -> tuple[bool, str, Dict[str, Any]]:
+        """Like :meth:`execute_skill` but also returns the parsed result_json.
+
+        For skills whose outputs the caller wants to format itself (e.g.
+        localize_object returns object poses). Returns (success, message, data)
+        where ``data`` is the decoded result_json object ({} if absent/invalid).
+        """
+        success, message, raw = self._send_and_wait(skill, params, timeout_s)
+        data: Dict[str, Any] = {}
+        s = (raw or "").strip()
+        if s and s not in ("null",):
+            try:
+                parsed = json.loads(s)
+                if isinstance(parsed, dict):
+                    data = parsed
+            except (json.JSONDecodeError, ValueError):
+                data = {}
+        return success, message, data
+
+    def _send_and_wait(
+        self,
+        skill: str,
+        params: Optional[Dict[str, Any]] = None,
+        timeout_s: float = SKILL_GOAL_TIMEOUT_S,
+    ) -> tuple[bool, str, str]:
+        """Send a goal, block for the result, and return (success, message, raw_json).
+
+        ``raw_json`` is the result's result_json string ("" on any client-side
+        error/timeout). Shared by execute_skill (which inlines the details) and
+        execute_skill_detailed (which parses them).
         """
         if self._client is None:
             return False, (
@@ -323,7 +366,7 @@ class ManipulationInterface:
                 "auto-discovered under ../MobileManipulationCore/install. If it "
                 "lives elsewhere, set MMC_INSTALL (its install/ dir) or "
                 "MANIPULATION_MSGS_PYTHONPATH before launching the UI."
-            )
+            ), ""
 
         # Wait for the skill server
         if not self._client.wait_for_server(timeout_sec=ACTION_SERVER_WAIT_TIMEOUT_S):
@@ -331,7 +374,7 @@ class ManipulationInterface:
                 f"Error: {EXECUTE_SKILL_ACTION} action server not available. "
                 "Ensure the MobileManipulationCore skill_server is running "
                 "(ros2 launch manipulation_bringup core_launch.py)."
-            )
+            ), ""
 
         # Build goal
         goal_msg = ExecuteSkill.Goal()
@@ -353,11 +396,11 @@ class ManipulationInterface:
             goal_msg, feedback_callback=_on_feedback
         )
         if not self._wait_for_future(send_future, timeout_s=5.0):
-            return False, f"Error: Timed out waiting for skill '{skill}' goal to be accepted"
+            return False, f"Error: Timed out waiting for skill '{skill}' goal to be accepted", ""
 
         goal_handle = send_future.result()
         if goal_handle is None or not goal_handle.accepted:
-            return False, f"Error: Skill '{skill}' goal was rejected by the skill server"
+            return False, f"Error: Skill '{skill}' goal was rejected by the skill server", ""
 
         # Track active goal for cancellation
         with self._goal_lock:
@@ -376,7 +419,7 @@ class ManipulationInterface:
                 goal_handle.cancel_goal_async()
             except Exception:  # pragma: no cover - best effort
                 pass
-            return False, f"Error: Skill '{skill}' timed out after {timeout_s:.0f}s (cancel requested)"
+            return False, f"Error: Skill '{skill}' timed out after {timeout_s:.0f}s (cancel requested)", ""
 
         result = result_future.result().result
         status = "succeeded" if result.success else "failed"
@@ -384,10 +427,7 @@ class ManipulationInterface:
         out = f"Skill '{skill}' {status}"
         if message:
             out += f": {message}"
-        details = (result.result_json or "").strip()
-        if details and details not in ("{}", "null"):
-            out += f" (details: {details})"
-        return bool(result.success), out
+        return bool(result.success), out, (result.result_json or "")
 
 
 # Global manipulation interface instance
@@ -523,6 +563,75 @@ class HandoverInput(BaseModel):
         ge=0.0,
         description="Reserved; the handover is bounded by its own move timeouts.",
     )
+
+
+class LocateObjectInput(BaseModel):
+    """Input schema for the LocateObject tool."""
+    objects: str = Field(
+        description=(
+            'One or more object labels to locate, comma-separated, e.g. "banana" '
+            'or "banana, red cup, bottle". Open-vocabulary.'
+        )
+    )
+    camera: str = Field(
+        default="wrist",
+        description=(
+            'Which depth camera to look through: "wrist" (the D405 on the arm — '
+            "most accurate, but the object must be in the wrist camera's view, so "
+            'raise the arm with ReadyArm first if it is parked) or "rear" (the '
+            "fixed D435i behind the arm)."
+        ),
+    )
+
+
+def _format_localization(data: Dict[str, Any], fallback_message: str) -> str:
+    """Render the localize_object result_json into a concise answer for the LLM."""
+    objects = data.get("objects") if isinstance(data, dict) else None
+    if not objects:
+        # No structured payload (skill failed early / server error): pass the
+        # human-readable message straight through.
+        return fallback_message
+    frame = data.get("frame", "base_footprint")
+    camera = data.get("camera", "?")
+    calib = str(data.get("calibration", ""))
+    lines = []
+    for o in objects:
+        label = o.get("label", "object")
+        if o.get("found"):
+            p = o.get("position", {}) or {}
+            x, y, z = p.get("x", 0.0), p.get("y", 0.0), p.get("z", 0.0)
+            extra = []
+            if o.get("distance_m") is not None:
+                extra.append(f"{o['distance_m']:.2f} m away")
+            if o.get("depth_m") is not None:
+                extra.append(f"depth {o['depth_m']:.2f} m")
+            if o.get("score"):
+                extra.append(f"confidence {o['score']:.2f}")
+            suffix = f" ({', '.join(extra)})" if extra else ""
+            lines.append(
+                f"- {label}: x={x:.2f}, y={y:.2f}, z={z:.2f} m in {frame}{suffix}")
+        else:
+            lines.append(f"- {label}: not found ({o.get('reason', 'not detected')})")
+    out = f"Object positions ({camera} camera, frame {frame}):\n" + "\n".join(lines)
+    if calib.startswith("extrinsic") and "UNCALIBRATED" in calib:
+        out += ("\nNote: the rear camera's mounting extrinsic is not yet calibrated, "
+                "so these rear-camera coordinates are approximate.")
+    return out
+
+
+def _simulate_localization(labels: list, camera: str) -> str:
+    """Plausible simulated object positions for --simple mode (no robot)."""
+    if not labels:
+        return "No objects requested."
+    lines = []
+    for i, label in enumerate(labels):
+        x = round(0.40 + 0.05 * i, 2)
+        y = round(-0.10 + 0.08 * i, 2)
+        z = 0.15
+        lines.append(
+            f"- {label}: x={x:.2f}, y={y:.2f}, z={z:.2f} m in base_footprint")
+    return (f"Object positions ({camera} camera, frame base_footprint) [SIMULATED]:\n"
+            + "\n".join(lines))
 
 
 # --------------------------------------------------------------------------- #
@@ -784,6 +893,85 @@ class HandoverTool(_SkillToolBase):
         )
 
 
+class LocateObjectTool(_SkillToolBase):
+    """Report the 3D position of named objects relative to base_footprint.
+
+    Perception tool (object localization), skill-backed: it drives MMC's
+    ``localize_object`` skill over the same /execute_skill action as the
+    manipulation tools, but parses the returned poses and formats them itself.
+    """
+
+    name: str = "LocateObject"
+    skill_name: str = "localize_object"
+    description: str = (
+        "Find WHERE one or more named objects are in 3D and report each object's "
+        "(x, y, z) position in metres relative to my base (base_footprint). This "
+        "locates OBJECTS in the scene; it is NOT robot self-localization (knowing "
+        "where I am on a map) — for my own pose use GetOdometry. Detects each "
+        "object by open-vocabulary name through a depth camera: camera='wrist' "
+        "(the D405 on my arm — most accurate, but the object must be in the wrist "
+        "camera's view, so raise the arm with ReadyArm first if it is parked) or "
+        "camera='rear' (the fixed D435i behind my arm). Handles multiple objects "
+        "in one call (comma-separated). Use for 'where is the banana?', 'what is "
+        "the 3D position of the red cup and the bottle from the rear camera?'. "
+        "Input: objects (labels), camera ('wrist' or 'rear')."
+    )
+    args_schema: Type[BaseModel] = LocateObjectInput
+
+    def _run(
+        self,
+        objects: str,
+        camera: str = "wrist",
+        run_manager: Optional[CallbackManagerForToolRun] = None,
+    ) -> str:
+        start_time = time.time()
+        manip = get_manipulation_interface()
+        labels = [o.strip() for o in str(objects).replace(";", ",").split(",")
+                  if o.strip()]
+        cam = (camera or "wrist").strip().lower()
+        log_params = {"objects": objects, "camera": cam}
+
+        if manip.simulation_mode:
+            result = _simulate_localization(labels, cam)
+            log_tool_call(
+                tool_name=self.name,
+                parameters=log_params,
+                result=result,
+                success=True,
+                execution_time_ms=(time.time() - start_time) * 1000,
+            )
+            return result
+
+        params: Dict[str, Any] = {
+            "objects": ", ".join(labels) if labels else str(objects),
+            "camera": cam,
+        }
+        try:
+            success, message, data = manip.execute_skill_detailed(
+                self.skill_name, params, timeout_s=_skill_timeout(0.0)
+            )
+        except Exception as e:
+            log_tool_call(
+                tool_name=self.name,
+                parameters=log_params,
+                result=None,
+                success=False,
+                error=str(e),
+                execution_time_ms=(time.time() - start_time) * 1000,
+            )
+            return f"Error locating objects: {e}"
+
+        result = _format_localization(data, message)
+        log_tool_call(
+            tool_name=self.name,
+            parameters=log_params,
+            result=result,
+            success=success,
+            execution_time_ms=(time.time() - start_time) * 1000,
+        )
+        return result
+
+
 # Convenience function to create all manipulation tools
 def get_manipulation_tools() -> list[BaseTool]:
     """Get all manipulation-related tools (one per MMC skill)."""
@@ -794,4 +982,11 @@ def get_manipulation_tools() -> list[BaseTool]:
         HomeArmTool(),
         ReadyArmTool(),
         HandoverTool(),
+    ]
+
+
+def get_perception_skill_tools() -> list[BaseTool]:
+    """Skill-backed perception tools (object localization via the skill server)."""
+    return [
+        LocateObjectTool(),
     ]

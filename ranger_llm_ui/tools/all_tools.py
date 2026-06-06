@@ -49,7 +49,9 @@ from ranger_llm_ui.tools.manipulation_tools import (
     HomeArmTool,
     ReadyArmTool,
     HandoverTool,
+    LocateObjectTool,
     get_manipulation_tools,
+    get_perception_skill_tools,
     initialize_manipulation_interface,
 )
 
@@ -81,7 +83,7 @@ TOOL_CATEGORIES = {
     },
     "perception": {
         "description": "Tools for camera and perception data",
-        "tools": ["GetCameraImage"],
+        "tools": ["GetCameraImage", "LocateObject"],
     },
     "manipulation": {
         "description": (
@@ -145,6 +147,7 @@ def get_all_tools(
     if include_perception:
         tools.extend([
             GetCameraImageTool(),
+            LocateObjectTool(),
         ])
 
     if include_manipulation:
@@ -181,7 +184,7 @@ def get_tools_by_category(category: str) -> list[BaseTool]:
     elif category == "diagnostics":
         return [ListNodesTool(), ListTopicsTool()]
     elif category == "perception":
-        return get_camera_tools()
+        return get_camera_tools() + get_perception_skill_tools()
     elif category == "manipulation":
         return get_manipulation_tools()
     else:

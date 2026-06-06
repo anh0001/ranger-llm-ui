@@ -677,6 +677,30 @@ class RangerAgent:
         return history
 
 
+def _simple_extract_object(text: str) -> str:
+    """Best-effort object phrase for SimpleAgent's no-LLM 'where is X' parsing.
+
+    Crude on purpose — --simple mode only needs *some* label (it returns
+    simulated coordinates). Pulls the words after a locator keyword and trims a
+    trailing prepositional phrase.
+    """
+    t = text.lower()
+    for key in ("object ", "of the ", "is the ", "find the ", "locate the ",
+                "locate ", "of ", "is ", "find "):
+        idx = t.find(key)
+        if idx >= 0:
+            tail = text[idx + len(key):].strip()
+            for stop in (" from", " using", " with", " on ", " relative",
+                         " in the", "?", ".", ","):
+                s = tail.lower().find(stop)
+                if s > 0:
+                    tail = tail[:s]
+            tail = tail.strip()
+            if tail:
+                return tail
+    return "object"
+
+
 class SimpleAgent:
     """
     Simplified agent for basic testing without full LangChain/ROSA setup.
@@ -743,6 +767,20 @@ class SimpleAgent:
                     angle = float(part)
                     break
             result = self.tool_map["turnangle"].run({"angle_deg": angle})
+        elif any(k in user_input_lower for k in (
+                "where is", "where's", "where are", "locate", "position of",
+                "3d pos", "3d position", "find the")):
+            # Object localization (NOT robot self-localization). Checked before
+            # the camera branch because requests often name a camera too
+            # ("use the wrist camera, where is the banana").
+            if "locateobject" in self.tool_map:
+                cam = ("rear" if ("rear" in user_input_lower
+                                  or "behind" in user_input_lower) else "wrist")
+                obj = _simple_extract_object(user_input)
+                result = self.tool_map["locateobject"].run(
+                    {"objects": obj, "camera": cam})
+            else:
+                result = "Object localization (LocateObject) is not available."
         elif "camera" in user_input_lower or "image" in user_input_lower:
             result = self.tool_map["getcameraimage"].run({})
         else:
