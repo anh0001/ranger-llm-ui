@@ -29,6 +29,79 @@ User (Web UI) → Gradio Interface → RangerAgent (wraps ROSA) → Ranger Tools
 4. **ROSA** (submodule: [ros-technician-cli/](ros-technician-cli/)) - Base agent framework from NASA JPL
 5. **ROS 2 Interface** - Native ROS 2 node for robot communication
 
+## Robot Stack Dependencies (Sibling Repositories)
+
+For **real-robot operation**, Ranger LLM UI is not self-contained: it is the
+natural-language *operator layer* that sits on top of the Ranger robot's ROS 2
+stack. Two companion repositories (both from GitHub user **anh0001**) provide the
+actual robot software and must be checked out as **sibling folders** next to this
+repo:
+
+```
+codes/                              # parent workspace (e.g. /home/robofi/codes)
+├── ranger-llm-ui/                  # THIS repo — LLM operator UI
+├── ranger-garden-assistant/        # robot base stack (REQUIRED at runtime)
+└── MobileManipulationCore/         # mobile-manipulation autonomy (companion stack)
+```
+
+### 1. `ranger-garden-assistant` — robot base stack (hard runtime dependency)
+
+- **Local path:** `../ranger-garden-assistant` (i.e. `/home/robofi/codes/ranger-garden-assistant`)
+- **GitHub:** https://github.com/anh0001/ranger-garden-assistant.git
+- **What it is:** The complete ROS 2 Humble stack for the AgileX Ranger Mini 3.0
+  omnidirectional base + PiPER 6-DOF arm, with Livox Mid-360 LiDAR, Tier IV C2-176
+  fisheye + Intel RealSense D405 cameras, Navigation2, MoveIt 2, and FASTLIO2
+  LiDAR-inertial odometry/localization (`robofi_bringup` is the main integration
+  package).
+- **Why this repo needs it:** It publishes/serves the exact ROS 2 interfaces that
+  Ranger LLM UI's tools drive. Without this stack running, the UI's movement,
+  status, camera, and navigation tools have nothing to talk to:
+  - `/cmd_vel` consumer + `/odom`, `/battery_state` publishers — `ranger_ros2`
+    base driver (used by `StopRobot`, manual controls, `GetOdometry`,
+    `BatteryStatus`, `SystemHealth`).
+  - `/camera/image_raw` — camera bringup (used by `GetCameraImage`).
+  - Nav2 `NavigateToPose` action — `robofi_bringup` navigation launch (used by
+    `NavigateToPose` tool).
+  - Bring it up with, e.g.: `ros2 launch robofi_bringup ranger_complete_bringup.launch.py`
+- **Not needed for `--simple` / simulation mode** (no ROS 2), which is the only way
+  to run this UI without the base stack.
+
+### 2. `MobileManipulationCore` — mobile-manipulation autonomy (companion stack)
+
+- **Local path:** `../MobileManipulationCore` (i.e. `/home/robofi/codes/MobileManipulationCore`)
+- **GitHub:** https://github.com/anh0001/MobileManipulationCore.git
+- **What it is:** The mobile-manipulation "brain" — vision-language-action (VLA)
+  and visual-servo control of the arm + base (`manipulation_*` packages). It is
+  **itself layered on `ranger-garden-assistant`** (which must already be running
+  its complete bringup before `MobileManipulationCore`'s `core_launch.py` starts).
+- **Why this repo references it:** In the overall Ranger deployment, Ranger LLM UI
+  (natural-language operator interface) and `MobileManipulationCore` (manipulation
+  autonomy) are sibling stacks that both run on top of the same
+  `ranger-garden-assistant` base. Pick-and-place / manipulation behaviors invoked
+  on the robot are executed by `MobileManipulationCore`; this UI's current tools
+  cover base movement, status, camera, and navigation.
+
+### Layering summary
+
+```
+                 ┌──────────────────────┐   ┌──────────────────────────┐
+   operator ───▶ │  ranger-llm-ui (UI)  │   │  MobileManipulationCore  │
+                 └──────────┬───────────┘   └────────────┬─────────────┘
+                            │  ROS 2 topics/actions       │
+                            ▼                             ▼
+                 ┌─────────────────────────────────────────────────────┐
+                 │     ranger-garden-assistant (robot base stack)       │
+                 │   base driver · cameras · Nav2 · MoveIt2 · FASTLIO2  │
+                 └─────────────────────────────────────────────────────┘
+                                       │
+                                       ▼
+                              Ranger Mini 3.0 + PiPER arm
+```
+
+**Note:** Both sibling repos are independent git repositories with their own
+build systems and `CLAUDE.md`/`AGENTS.md`. They are *not* submodules of this repo.
+The only submodules here are `ros-technician-cli` (ROSA) and `ros2_numpy`.
+
 ## File Structure
 
 ```
@@ -427,8 +500,19 @@ This uses `SimpleAgent` ([agent_interface.py](ranger_llm_ui/agent_interface.py:3
 - `ros-technician-cli` - ROSA framework
 - `ros2_numpy` - NumPy conversions for ROS messages
 
+**Sibling repositories (robot stack — required for real-robot operation):**
+See [Robot Stack Dependencies](#robot-stack-dependencies-sibling-repositories) above.
+- `../ranger-garden-assistant` — robot base stack (REQUIRED at runtime; provides
+  `/cmd_vel`, `/odom`, `/battery_state`, `/camera/image_raw`, Nav2, MoveIt 2).
+  https://github.com/anh0001/ranger-garden-assistant.git
+- `../MobileManipulationCore` — mobile-manipulation autonomy stack (companion;
+  runs on top of `ranger-garden-assistant`).
+  https://github.com/anh0001/MobileManipulationCore.git
+
 ## References
 
+- [ranger-garden-assistant](https://github.com/anh0001/ranger-garden-assistant) - Ranger robot base stack (required at runtime)
+- [MobileManipulationCore](https://github.com/anh0001/MobileManipulationCore) - Mobile-manipulation autonomy (companion stack)
 - [ROSA (NASA JPL)](https://github.com/nasa-jpl/rosa) - Base agent framework
 - [LangChain Documentation](https://python.langchain.com/) - Agent and tools
 - [Gradio Guide](https://www.gradio.app/guides/agents-and-tool-usage) - UI patterns
@@ -444,7 +528,7 @@ Anh Nguyen - anh0001@example.com
 
 ---
 
-**Last Updated:** 2026-01-18
+**Last Updated:** 2026-06-06
 **Codebase Version:** 0.1.0
 <!-- ARIS:BEGIN -->
 ## ARIS Skill Scope
