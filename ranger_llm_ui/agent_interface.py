@@ -443,6 +443,11 @@ class RangerAgent:
                 streaming=streaming,
             )
 
+        # Keep a handle to the raw chat model so auxiliary consumers (e.g. the
+        # scenario safety supervisor) can reuse the exact same configured LLM
+        # and auth path without spinning up a second client.
+        self._llm = llm
+
         # Let the camera tool reuse this LLM to describe captured frames (the
         # GetCameraImage tool is return_direct, so the agent never sees the image
         # itself — it makes a short vision call to caption it). Best-effort.
@@ -661,6 +666,10 @@ class RangerAgent:
         self._rosa.clear_chat()
         logger.info("Chat history cleared")
 
+    def get_llm(self) -> Optional[Any]:
+        """Return the raw chat model backing this agent (for auxiliary calls)."""
+        return getattr(self, "_llm", None)
+
     def get_tool_names(self) -> list[str]:
         """Get list of available tool names."""
         # ROSA tools include both Ranger tools and ROS2 introspection tools
@@ -788,6 +797,14 @@ class SimpleAgent:
 
         self.logger.log_conversation(role="assistant", content=result)
         return {"output": result, "intermediate_steps": []}
+
+    def get_llm(self) -> Optional[Any]:
+        """No LLM in simple mode (scenario supervisor degrades to stop-on-error)."""
+        return None
+
+    def clear_history(self):
+        """No persistent history in simple mode; provided for a uniform API."""
+        return None
 
 
 def create_agent(

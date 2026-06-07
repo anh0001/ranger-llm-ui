@@ -1,0 +1,11 @@
+# title: Object Inspection
+# description: Raise the arm camera, capture a view, and locate common objects in the workspace.
+# safety: supervise
+# fresh_context: true
+
+Raise your arm to the ready look-down pose so the wrist camera can see the workspace.
+Show me the wrist camera view.
+Where is the bottle? Use the wrist camera.
+Where is the cup? Use the wrist camera.
+Park your arm back at the rest pose.
+Summarize what objects you found and roughly where they are.

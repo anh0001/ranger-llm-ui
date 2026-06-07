@@ -14,6 +14,7 @@ Usage:
 """
 
 import os
+import re
 import sys
 import asyncio
 import threading
@@ -31,6 +32,16 @@ from ranger_llm_ui.tools.movement_tools import get_ros_interface
 from ranger_llm_ui.tools.status_tools import get_status_interface
 from ranger_llm_ui.tools.camera_tools import get_camera_interface
 from ranger_llm_ui.utils.logger import setup_logging, get_command_logger
+from ranger_llm_ui import scenarios as scenario_lib
+from ranger_llm_ui.scenarios import (
+    load_scenarios,
+    parse_scenario_text,
+    POLICY_LABELS,
+    LABEL_TO_POLICY,
+    POLICY_STOP,
+    POLICY_SUPERVISE,
+)
+from ranger_llm_ui.scenario_runner import run_scenario, SafetySupervisor, content_to_text
 from ranger_llm_ui.voice import (
     get_transcriber,
     get_synthesizer,
@@ -117,6 +128,21 @@ class RangerUINode:
 
         # Cancellation flag for stopping long-running requests
         self._cancel_requested = threading.Event()
+
+        # Scenario runner control flags (stop = halt run; pause = hold between
+        # steps). Both are honored by run_scenario() between steps/attempts.
+        self._scenario_stop = threading.Event()
+        self._scenario_pause = threading.Event()
+        # True while a scenario run is streaming (re-entrancy guard).
+        self._scenario_active = False
+        # Loaded lazily in create_ui(); list[Scenario].
+        self._scenarios: list = []
+
+        # Serializes every agent.invoke() call (chat, scenario, manual teleop)
+        # so the single ROSA executor / shared chat_history is never driven by
+        # two Gradio events at once (different events run in independent
+        # concurrency groups, so the queue does not serialize them for us).
+        self._agent_lock = threading.Lock()
 
     def initialize_ros(self):
         """Initialize ROS 2 node if available."""
@@ -205,7 +231,14 @@ class RangerUINode:
         return f"Model switched to **{self.model_name or 'provider default'}** (provider: {self.llm_provider})"
 
     def emergency_stop(self) -> str:
-        """Execute emergency stop."""
+        """Execute emergency stop.
+
+        Also halts any in-flight scenario run (the runner checks this flag
+        between steps) so a single E-stop press from any tab stops both manual
+        and scenario-driven motion.
+        """
+        self._scenario_stop.set()
+        self._scenario_pause.clear()
         ros = get_ros_interface()
         ros.stop()
         logger.warning("EMERGENCY STOP executed")
@@ -229,6 +262,18 @@ class RangerUINode:
         self._cancel_requested.set()
         logger.info("Chat cancellation requested")
         return gr.update(visible=True), gr.update(visible=False)
+
+    def _invoke_agent(self, prompt: str) -> dict:
+        """Run a single agent.invoke() under the agent lock.
+
+        All invoke paths (chat, scenario, manual teleop) funnel through here so
+        the agent's single executor / chat_history is never driven concurrently
+        by two Gradio events.
+        """
+        if self.agent is None:
+            return {"output": "Agent not initialized.", "intermediate_steps": []}
+        with self._agent_lock:
+            return self.agent.invoke(prompt)
 
     def chat_response(
         self, message: str, history: list[dict]
@@ -261,7 +306,7 @@ class RangerUINode:
             # Set timeout to 60 seconds to prevent hanging
             import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(self.agent.invoke, message)
+                future = executor.submit(self._invoke_agent, message)
 
                 # Poll for cancellation or completion (max 60 seconds)
                 elapsed_time = 0
@@ -344,25 +389,13 @@ class RangerUINode:
 
     @staticmethod
     def _content_to_text(content) -> str:
-        """Flatten chat content to plain text.
+        """Flatten chat content (str | list of blocks | dict | None) to text.
 
-        claude_proxy / Anthropic responses may arrive as a list of content
-        blocks (e.g. [{"type": "text", "text": "..."}]) rather than a plain
-        string, so coerce any shape into speakable text.
+        Delegates to the shared :func:`scenario_runner.content_to_text` so the
+        chat/TTS path and the scenario/supervisor path can never drift apart in
+        how they coerce claude_proxy / Anthropic list-of-content-block replies.
         """
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            parts = []
-            for block in content:
-                if isinstance(block, dict):
-                    parts.append(block.get("text") or block.get("content") or "")
-                else:
-                    parts.append(str(block))
-            return " ".join(p for p in parts if p)
-        if isinstance(content, dict):
-            return content.get("text") or content.get("content") or ""
-        return str(content) if content is not None else ""
+        return content_to_text(content)
 
     def synthesize_response(self, history: list[dict], enabled: bool):
         """Speak the latest assistant reply when voice output is enabled."""
@@ -377,30 +410,395 @@ class RangerUINode:
     def teleop_forward(self, distance: float = 0.5) -> str:
         """Manual forward movement."""
         if self.agent:
-            result = self.agent.invoke(f"move forward {distance} meters")
+            result = self._invoke_agent(f"move forward {distance} meters")
             return result.get("output", "Command sent")
         return "Agent not initialized"
 
     def teleop_backward(self, distance: float = 0.5) -> str:
         """Manual backward movement."""
         if self.agent:
-            result = self.agent.invoke(f"move backward {distance} meters")
+            result = self._invoke_agent(f"move backward {distance} meters")
             return result.get("output", "Command sent")
         return "Agent not initialized"
 
     def teleop_left(self, angle: float = 45) -> str:
         """Manual left turn."""
         if self.agent:
-            result = self.agent.invoke(f"turn left {angle} degrees")
+            result = self._invoke_agent(f"turn left {angle} degrees")
             return result.get("output", "Command sent")
         return "Agent not initialized"
 
     def teleop_right(self, angle: float = 45) -> str:
         """Manual right turn."""
         if self.agent:
-            result = self.agent.invoke(f"turn right {angle} degrees")
+            result = self._invoke_agent(f"turn right {angle} degrees")
             return result.get("output", "Command sent")
         return "Agent not initialized"
+
+    # ---------------------------------------------------------------------
+    # Scenario runner (Scenarios tab)
+    # ---------------------------------------------------------------------
+    # Icons used to render per-step state in the steps preview.
+    _STEP_ICONS = {
+        "pending": "⬜",
+        "running": "🔵",
+        "ok": "✅",
+        "recovered": "♻️",
+        "failed": "❌",
+    }
+
+    def _scenario_titles(self) -> list[str]:
+        return [s.title for s in self._scenarios]
+
+    def _find_scenario(self, title: Optional[str]):
+        for s in self._scenarios:
+            if s.title == title:
+                return s
+        return None
+
+    def _steps_view_md(self, scenario, current_idx: int, statuses: list[str]) -> str:
+        """Render the numbered step list with per-step status icons."""
+        if scenario is None or scenario.num_steps == 0:
+            return "_No steps to show._"
+        lines = []
+        for i, step in enumerate(scenario.steps):
+            st = statuses[i] if i < len(statuses) else "pending"
+            icon = self._STEP_ICONS.get(st, "⬜")
+            text = step if len(step) <= 100 else step[:97] + "…"
+            text = text.replace("<", "&lt;").replace(">", "&gt;")
+            if st == "running":
+                text = f"**{text}**"
+            lines.append(f"{icon} {i + 1}. {text}")
+        # Two trailing spaces force a hard line break in Markdown.
+        return "  \n".join(lines)
+
+    def _scenario_status_md(
+        self,
+        total: int,
+        counters: dict,
+        state: str,
+        current: Optional[int] = None,
+    ) -> str:
+        """Render the progress bar + status badge for a scenario run."""
+        finished = counters.get("ok", 0) + counters.get("recovered", 0) + counters.get("failed", 0)
+        pct = int(round(100 * finished / total)) if total else 0
+        color = {
+            "running": "#2563eb",
+            "paused": "#d97706",
+            "stopped": "#6b7280",
+            "aborted": "#dc2626",
+            "done": "#16a34a",
+            "idle": "#9ca3af",
+        }.get(state, "#2563eb")
+        badge = {
+            "running": "▶ running",
+            "paused": "⏸ paused",
+            "stopped": "⏹ stopped",
+            "aborted": "🛑 aborted",
+            "done": "✅ complete",
+            "idle": "ready",
+        }.get(state, state)
+        if current is not None and current >= 0 and state in ("running", "paused"):
+            where = f"step {current + 1} / {total}"
+        else:
+            where = f"{finished} / {total} steps"
+        bar = (
+            '<div style="background:#e5e7eb;border-radius:8px;height:12px;'
+            'width:100%;overflow:hidden;margin:6px 0;">'
+            f'<div style="background:{color};height:12px;width:{pct}%;'
+            'transition:width .2s;"></div></div>'
+        )
+        legend = (
+            f'✅ {counters.get("ok", 0)} ok · '
+            f'♻️ {counters.get("recovered", 0)} recovered · '
+            f'❌ {counters.get("failed", 0)} failed'
+        )
+        return f"**{badge}** · {where}\n\n{bar}\n\n<sub>{legend}</sub>"
+
+    def _scenario_detail_updates(self, sc):
+        """Build the (editor, desc, steps_view, policy, fresh, status) updates
+        shown when a scenario is selected or the list is reloaded."""
+        if sc is None:
+            empty_status = self._scenario_status_md(0, {}, "idle")
+            return (
+                "",
+                "_No scenarios found. Add `.txt` files to the `scenarios/` "
+                "folder, then click **↻ Reload**._",
+                "_No steps to show._",
+                gr.update(),
+                gr.update(),
+                empty_status,
+            )
+        desc = (
+            f"**{sc.title}**\n\n"
+            f"{sc.description or '_No description provided._'}\n\n"
+            f"*{sc.num_steps} step(s)*"
+        )
+        steps_view = self._steps_view_md(sc, -1, ["pending"] * sc.num_steps)
+        return (
+            sc.raw,
+            desc,
+            steps_view,
+            gr.update(value=scenario_lib.policy_label(sc.safety)),
+            gr.update(value=sc.fresh_context),
+            self._scenario_status_md(sc.num_steps, {}, "idle"),
+        )
+
+    def select_scenario(self, title: Optional[str]):
+        """Dropdown change handler: populate editor/preview/options."""
+        return self._scenario_detail_updates(self._find_scenario(title))
+
+    def reload_scenarios(self):
+        """Re-scan the scenarios directory and refresh the picker + preview."""
+        self._scenarios = load_scenarios()
+        titles = self._scenario_titles()
+        value = titles[0] if titles else None
+        sc = self._scenarios[0] if self._scenarios else None
+        return (gr.update(choices=titles, value=value),) + self._scenario_detail_updates(sc)
+
+    def pause_scenario(self):
+        """Pause the run (takes effect between steps)."""
+        self._scenario_pause.set()
+        logger.info("Scenario paused")
+        return gr.update(visible=False), gr.update(visible=True)
+
+    def resume_scenario(self):
+        """Resume a paused run."""
+        self._scenario_pause.clear()
+        logger.info("Scenario resumed")
+        return gr.update(visible=True), gr.update(visible=False)
+
+    def stop_scenario(self):
+        """Stop the run and immediately stop the robot, then reset controls."""
+        self._scenario_stop.set()
+        self._scenario_pause.clear()
+        try:
+            self.emergency_stop()
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning(f"Emergency stop during scenario stop failed: {e}")
+        logger.info("Scenario stop requested")
+        # run, pause, resume, stop -> back to idle layout
+        return (
+            gr.update(visible=True),
+            gr.update(visible=False),
+            gr.update(visible=False),
+            gr.update(visible=False),
+        )
+
+    def run_scenario_stream(
+        self,
+        raw_text: str,
+        name_hint: Optional[str],
+        policy_label: str,
+        max_attempts: Any,
+        fresh_context: bool,
+        history: Optional[list],
+    ) -> Generator[tuple, None, None]:
+        """Run a scenario, guarding against a second concurrent run.
+
+        Thin wrapper around :meth:`_run_scenario_core` that sets the
+        ``_scenario_active`` re-entrancy flag and always clears it (even on
+        cancel/exception) via ``finally``.
+        """
+        history = list(history or [])
+        if self._scenario_active:
+            history.append({
+                "role": "assistant",
+                "content": "⚠️ A scenario is already running. Stop it before starting another.",
+            })
+            yield history, gr.update(), gr.update()
+            return
+        self._scenario_active = True
+        try:
+            yield from self._run_scenario_core(
+                raw_text, name_hint, policy_label, max_attempts, fresh_context, history
+            )
+        finally:
+            self._scenario_active = False
+
+    def _run_scenario_core(
+        self,
+        raw_text: str,
+        name_hint: Optional[str],
+        policy_label: str,
+        max_attempts: Any,
+        fresh_context: bool,
+        history: Optional[list],
+    ) -> Generator[tuple, None, None]:
+        """Execute the scenario in ``raw_text`` step by step, streaming the
+        transcript, progress bar, and step states into the Scenarios tab.
+
+        Yields ``(chatbot_history, status_md, steps_view_md)`` tuples.
+        """
+        history = list(history or [])
+
+        # NOTE: control flags (_scenario_stop/_scenario_pause) are cleared by the
+        # Run button's first handler (_scenario_running_ui), before the Stop
+        # button is shown, so we must NOT clear them here — doing so could race
+        # with and discard a Stop press.
+
+        name = re.sub(r"\W+", "_", (name_hint or "custom")).strip("_").lower() or "custom"
+        scenario = parse_scenario_text(raw_text or "", name=name)
+        policy = LABEL_TO_POLICY.get(policy_label, POLICY_STOP)
+        try:
+            max_attempts = int(max_attempts)
+        except (TypeError, ValueError):
+            max_attempts = 2
+        max_attempts = max(0, min(max_attempts, 5))
+
+        total = scenario.num_steps
+        statuses = ["pending"] * total
+        counters = {"ok": 0, "recovered": 0, "failed": 0}
+        current = -1
+
+        if total == 0:
+            history.append({
+                "role": "assistant",
+                "content": "⚠️ This scenario has no steps. Add some commands (one per line) and run again.",
+            })
+            yield history, self._scenario_status_md(0, counters, "idle"), self._steps_view_md(scenario, -1, statuses)
+            return
+
+        # Optional fresh conversation context for this run.
+        if fresh_context and self.agent is not None:
+            try:
+                self.agent.clear_history()
+            except Exception as e:
+                logger.debug(f"clear_history failed (non-fatal): {e}")
+
+        # Safety supervisor reuses the agent's own LLM; None in simple mode.
+        llm = None
+        if self.agent is not None:
+            try:
+                llm = self.agent.get_llm()
+            except Exception:
+                llm = None
+        supervisor = SafetySupervisor(llm) if policy == POLICY_SUPERVISE else None
+
+        # All invokes funnel through _invoke_agent (agent lock + None-safe).
+        invoke = self._invoke_agent
+
+        def estop():
+            try:
+                self.emergency_stop()
+            except Exception as e:  # pragma: no cover - defensive
+                logger.warning(f"Emergency stop callback failed: {e}")
+
+        # Opening banner.
+        history.append({
+            "role": "assistant",
+            "content": (
+                f"▶ **Scenario:** {scenario.title} — {total} step(s) · "
+                f"safety: _{policy_label}_"
+            ),
+        })
+        yield history, self._scenario_status_md(total, counters, "running", current), self._steps_view_md(scenario, current, statuses)
+
+        for ev in run_scenario(
+            scenario,
+            invoke=invoke,
+            emergency_stop=estop,
+            supervisor=supervisor,
+            policy=policy,
+            max_attempts=max_attempts,
+            stop_event=self._scenario_stop,
+            pause_event=self._scenario_pause,
+        ):
+            kind = ev.get("kind")
+
+            if kind == "scenario_start":
+                continue
+
+            if kind == "paused":
+                current = ev.get("index", current)
+                yield history, self._scenario_status_md(total, counters, "paused", current), self._steps_view_md(scenario, current, statuses)
+                continue
+
+            if kind == "step_start":
+                current = ev["index"]
+                if 0 <= current < total:
+                    statuses[current] = "running"
+                prefix = "↻ " if ev.get("attempt", 0) > 0 else ""
+                label = f"{prefix}Step {current + 1}/{total}"
+                history.append({"role": "user", "content": f"**{label}** · {ev['prompt']}"})
+                yield history, self._scenario_status_md(total, counters, "running", current), self._steps_view_md(scenario, current, statuses)
+                continue
+
+            if kind == "step_result":
+                text = ev.get("output") or "_(no output)_"
+                tools = ev.get("tools") or []
+                if tools:
+                    text = f"{text}\n\n<sub>tools: {', '.join(tools)}</sub>"
+                if ev.get("mitigation"):
+                    text = f"🩹 _mitigation result_\n\n{text}"
+                history.append({"role": "assistant", "content": text})
+                yield history, self._scenario_status_md(total, counters, "running", current), self._steps_view_md(scenario, current, statuses)
+                continue
+
+            if kind == "supervisor":
+                action = ev.get("action", "")
+                emoji = {"ok": "✅", "retry": "🔁", "mitigate": "🩹", "abort": "🛑"}.get(action, "🛡️")
+                msg = f"🛡️ **Safety supervisor:** {emoji} `{action}` — {ev.get('reason', '')}"
+                if ev.get("fix"):
+                    msg += f"\n\n> {ev['fix']}"
+                history.append({"role": "assistant", "content": msg})
+                yield history, self._scenario_status_md(total, counters, "running", current), self._steps_view_md(scenario, current, statuses)
+                continue
+
+            if kind == "recovery":
+                kl = ev.get("kind_label", "recovery")
+                history.append({
+                    "role": "user",
+                    "content": f"🩹 **Recovery ({kl}):** {ev.get('prompt', '')}",
+                })
+                yield history, self._scenario_status_md(total, counters, "running", current), self._steps_view_md(scenario, current, statuses)
+                continue
+
+            if kind == "info":
+                history.append({"role": "assistant", "content": f"ℹ️ {ev.get('text', '')}"})
+                yield history, self._scenario_status_md(total, counters, "running", current), self._steps_view_md(scenario, current, statuses)
+                continue
+
+            if kind == "step_done":
+                counters = ev.get("counters", counters)
+                idx = ev.get("index", current)
+                if 0 <= idx < total:
+                    statuses[idx] = ev.get("outcome", "ok")
+                yield history, self._scenario_status_md(total, counters, "running", current), self._steps_view_md(scenario, current, statuses)
+                continue
+
+            if kind == "stopped":
+                counters = ev.get("counters", counters)
+                statuses = ["pending" if s == "running" else s for s in statuses]
+                history.append({"role": "assistant", "content": "⏹ **Scenario stopped.** Robot velocity zeroed."})
+                yield history, self._scenario_status_md(total, counters, "stopped"), self._steps_view_md(scenario, -1, statuses)
+                return
+
+            if kind == "aborted":
+                counters = ev.get("counters", counters)
+                idx = ev.get("index", current)
+                if 0 <= idx < total:
+                    statuses[idx] = "failed"
+                history.append({
+                    "role": "assistant",
+                    "content": (
+                        f"🛑 **Scenario aborted at step {idx + 1}:** {ev.get('reason', '')}\n\n"
+                        "Emergency stop engaged — the robot has been stopped."
+                    ),
+                })
+                yield history, self._scenario_status_md(total, counters, "aborted"), self._steps_view_md(scenario, -1, statuses)
+                return
+
+            if kind == "done":
+                counters = ev.get("counters", counters)
+                summary = (
+                    f"✅ **Scenario complete** — {counters.get('ok', 0)} ok, "
+                    f"{counters.get('recovered', 0)} recovered, "
+                    f"{counters.get('failed', 0)} failed of {total} step(s)."
+                )
+                history.append({"role": "assistant", "content": summary})
+                yield history, self._scenario_status_md(total, counters, "done"), self._steps_view_md(scenario, -1, statuses)
+                return
 
     def create_ui(self) -> gr.Blocks:
         """Create the Gradio UI interface."""
@@ -408,6 +806,35 @@ class RangerUINode:
         # Get path to robot image
         assets_dir = Path(__file__).parent / "assets"
         robot_image_path = assets_dir / "robot_ranger_garden.webp"
+
+        # Load pre-made scenarios for the Scenarios tab and compute defaults.
+        self._scenarios = load_scenarios()
+        _sc_titles = self._scenario_titles()
+        _sc_default = self._scenarios[0] if self._scenarios else None
+        _sc_default_title = _sc_titles[0] if _sc_titles else None
+        if _sc_default is not None:
+            _sc_raw = _sc_default.raw
+            _sc_desc = (
+                f"**{_sc_default.title}**\n\n"
+                f"{_sc_default.description or '_No description provided._'}\n\n"
+                f"*{_sc_default.num_steps} step(s)*"
+            )
+            _sc_steps = self._steps_view_md(
+                _sc_default, -1, ["pending"] * _sc_default.num_steps
+            )
+            _sc_policy = scenario_lib.policy_label(_sc_default.safety)
+            _sc_fresh = _sc_default.fresh_context
+            _sc_status = self._scenario_status_md(_sc_default.num_steps, {}, "idle")
+        else:
+            _sc_raw = ""
+            _sc_desc = (
+                "_No scenarios found. Add `.txt` files to the `scenarios/` "
+                "folder, then click **↻ Reload**._"
+            )
+            _sc_steps = "_No steps to show._"
+            _sc_policy = POLICY_LABELS[POLICY_STOP]
+            _sc_fresh = True
+            _sc_status = self._scenario_status_md(0, {}, "idle")
 
         with gr.Blocks(title="Ranger Robot Assistant") as demo:
             # Centered title
@@ -495,6 +922,94 @@ class RangerUINode:
                             variant="stop",
                             elem_classes=["stop-button"],
                         )
+
+                # Scenarios Tab - Pick & run a pre-made scenario (prompt file
+                # fed line-by-line) with a live transcript and a safety net.
+                with gr.Tab("Scenarios"):
+                    gr.Markdown(
+                        "### Pre-made Scenarios\n"
+                        "Pick a scenario, review the steps, then **▶ Run** it. "
+                        "Each line is sent to me in order (context carries over), "
+                        "with a safety net that stops — or recovers — when a step "
+                        "goes wrong. Edit the steps under **✎ Edit scenario** to "
+                        "customize a run."
+                    )
+                    with gr.Row():
+                        # Left column: picker + options + controls
+                        with gr.Column(scale=1):
+                            with gr.Row(elem_classes=["input-row"]):
+                                scenario_dropdown = gr.Dropdown(
+                                    choices=_sc_titles,
+                                    value=_sc_default_title,
+                                    label="Scenario",
+                                    interactive=True,
+                                    scale=4,
+                                )
+                                reload_scenarios_btn = gr.Button(
+                                    "↻", scale=0, min_width=44, size="sm"
+                                )
+                            scenario_desc = gr.Markdown(_sc_desc)
+
+                            with gr.Accordion("Safety & options", open=False):
+                                scenario_policy = gr.Radio(
+                                    choices=list(POLICY_LABELS.values()),
+                                    value=_sc_policy,
+                                    label="On step error",
+                                    info=(
+                                        "Stop = halt + e-stop · AI supervisor = "
+                                        "let me adjudicate & recover · Run all = "
+                                        "ignore (manual e-stop only)"
+                                    ),
+                                )
+                                scenario_max_attempts = gr.Number(
+                                    value=2,
+                                    precision=0,
+                                    minimum=0,
+                                    maximum=5,
+                                    label="Max recovery attempts (AI supervisor)",
+                                )
+                                scenario_fresh = gr.Checkbox(
+                                    value=_sc_fresh,
+                                    label="Start from fresh context (clear chat history)",
+                                )
+
+                            with gr.Accordion("✎ Edit scenario (advanced)", open=False):
+                                scenario_editor = gr.Textbox(
+                                    value=_sc_raw,
+                                    label="Scenario steps — one command per line ('#' = comment)",
+                                    lines=10,
+                                    max_lines=20,
+                                    interactive=True,
+                                )
+
+                            with gr.Row():
+                                run_scenario_btn = gr.Button(
+                                    "▶ Run", variant="primary", scale=2
+                                )
+                                pause_scenario_btn = gr.Button(
+                                    "⏸ Pause", scale=1, visible=False
+                                )
+                                resume_scenario_btn = gr.Button(
+                                    "▶ Resume", scale=1, visible=False
+                                )
+                                scenario_stop_btn = gr.Button(
+                                    "⏹ Stop", variant="stop", scale=1, visible=False
+                                )
+                            scenario_estop_btn = gr.Button(
+                                "🛑 EMERGENCY STOP",
+                                variant="stop",
+                                elem_classes=["stop-button"],
+                            )
+
+                        # Right column: progress + steps + live transcript
+                        with gr.Column(scale=2):
+                            scenario_status = gr.Markdown(_sc_status)
+                            with gr.Accordion("Steps", open=True):
+                                scenario_steps_view = gr.Markdown(_sc_steps)
+                            scenario_chatbot = gr.Chatbot(
+                                label="Scenario run",
+                                height=420,
+                            )
 
                 # Status Tab - Status display and controls
                 with gr.Tab("Status"):
@@ -748,6 +1263,128 @@ class RangerUINode:
                 outputs=[tts_audio],
             )
 
+            # ---- Scenarios tab wiring ----
+            # Selecting a scenario populates the editor, preview, and options.
+            scenario_dropdown.change(
+                fn=self.select_scenario,
+                inputs=[scenario_dropdown],
+                outputs=[
+                    scenario_editor,
+                    scenario_desc,
+                    scenario_steps_view,
+                    scenario_policy,
+                    scenario_fresh,
+                    scenario_status,
+                ],
+            )
+
+            # Reload re-scans the scenarios/ folder and refreshes everything.
+            reload_scenarios_btn.click(
+                fn=self.reload_scenarios,
+                inputs=None,
+                outputs=[
+                    scenario_dropdown,
+                    scenario_editor,
+                    scenario_desc,
+                    scenario_steps_view,
+                    scenario_policy,
+                    scenario_fresh,
+                    scenario_status,
+                ],
+            )
+
+            # Run: swap to the running control layout, stream the scenario, then
+            # restore the idle layout when it completes (normally or via abort).
+            # Clearing the control flags here (before the Stop button is shown)
+            # — rather than inside the streaming generator — means a Stop press
+            # can never be clobbered by a late clear.
+            def _scenario_running_ui():
+                self._scenario_stop.clear()
+                self._scenario_pause.clear()
+                return (
+                    gr.update(visible=False),  # run
+                    gr.update(visible=True),   # pause
+                    gr.update(visible=False),  # resume
+                    gr.update(visible=True),   # stop
+                )
+
+            def _scenario_idle_ui():
+                return (
+                    gr.update(visible=True),   # run
+                    gr.update(visible=False),  # pause
+                    gr.update(visible=False),  # resume
+                    gr.update(visible=False),  # stop
+                )
+
+            scenario_run_event = run_scenario_btn.click(
+                fn=_scenario_running_ui,
+                inputs=None,
+                outputs=[
+                    run_scenario_btn,
+                    pause_scenario_btn,
+                    resume_scenario_btn,
+                    scenario_stop_btn,
+                ],
+            ).then(
+                fn=self.run_scenario_stream,
+                inputs=[
+                    scenario_editor,
+                    scenario_dropdown,
+                    scenario_policy,
+                    scenario_max_attempts,
+                    scenario_fresh,
+                    scenario_chatbot,
+                ],
+                outputs=[scenario_chatbot, scenario_status, scenario_steps_view],
+            ).then(
+                fn=_scenario_idle_ui,
+                inputs=None,
+                outputs=[
+                    run_scenario_btn,
+                    pause_scenario_btn,
+                    resume_scenario_btn,
+                    scenario_stop_btn,
+                ],
+            )
+
+            # Pause/Resume swap their two buttons; the runner honors the flag
+            # between steps.
+            pause_scenario_btn.click(
+                fn=self.pause_scenario,
+                inputs=None,
+                outputs=[pause_scenario_btn, resume_scenario_btn],
+            )
+            resume_scenario_btn.click(
+                fn=self.resume_scenario,
+                inputs=None,
+                outputs=[pause_scenario_btn, resume_scenario_btn],
+            )
+
+            # Stop / E-stop: halt the run, stop the robot, cancel the generator,
+            # and reset the controls to idle.
+            scenario_stop_btn.click(
+                fn=self.stop_scenario,
+                inputs=None,
+                outputs=[
+                    run_scenario_btn,
+                    pause_scenario_btn,
+                    resume_scenario_btn,
+                    scenario_stop_btn,
+                ],
+                cancels=[scenario_run_event],
+            )
+            scenario_estop_btn.click(
+                fn=self.stop_scenario,
+                inputs=None,
+                outputs=[
+                    run_scenario_btn,
+                    pause_scenario_btn,
+                    resume_scenario_btn,
+                    scenario_stop_btn,
+                ],
+                cancels=[scenario_run_event],
+            )
+
             # When Stop is clicked: cancel chat, restore Send button
             stop_chat_btn.click(
                 fn=self.cancel_chat,
@@ -761,11 +1398,23 @@ class RangerUINode:
                 outputs=[chatbot],
             )
 
-            # Stop button cancels the ongoing chat request AND executes emergency stop
+            # Stop button cancels the ongoing chat request AND any running
+            # scenario, then executes emergency stop. The trailing .then resets
+            # the scenario controls to idle — the run chain's own
+            # .then(_scenario_idle_ui) won't fire because it was just cancelled.
             stop_btn.click(
                 fn=self.emergency_stop,
                 outputs=[],
-                cancels=[submit_event, msg_event, mic_event],  # Cancel ongoing chat
+                cancels=[submit_event, msg_event, mic_event, scenario_run_event],
+            ).then(
+                fn=_scenario_idle_ui,
+                inputs=None,
+                outputs=[
+                    run_scenario_btn,
+                    pause_scenario_btn,
+                    resume_scenario_btn,
+                    scenario_stop_btn,
+                ],
             )
 
             # Event handlers for Status tab
@@ -788,7 +1437,22 @@ class RangerUINode:
             back_btn.click(fn=self.teleop_backward, outputs=[manual_output])
             left_btn.click(fn=self.teleop_left, outputs=[manual_output])
             right_btn.click(fn=self.teleop_right, outputs=[manual_output])
-            stop_manual_btn.click(fn=self.emergency_stop, outputs=[manual_output])
+            # Manual Stop also halts a running scenario (parity with the other
+            # E-stops): cancel the run chain and reset the scenario controls.
+            stop_manual_btn.click(
+                fn=self.emergency_stop,
+                outputs=[manual_output],
+                cancels=[scenario_run_event],
+            ).then(
+                fn=_scenario_idle_ui,
+                inputs=None,
+                outputs=[
+                    run_scenario_btn,
+                    pause_scenario_btn,
+                    resume_scenario_btn,
+                    scenario_stop_btn,
+                ],
+            )
 
             # Custom footer at the bottom
             gr.HTML(

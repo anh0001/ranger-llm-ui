@@ -1,0 +1,9 @@
+# title: Return Home & Park
+# description: Navigate back to the map origin with Nav2, then safely park the arm. Needs the Nav2 stack.
+# safety: stop
+# fresh_context: true
+
+Navigate to position x=0, y=0 in the map.
+Once you arrive, report your battery level.
+Park your arm at the rest pose.
+Confirm that you are home and safely parked.

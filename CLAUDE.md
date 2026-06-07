@@ -125,6 +125,8 @@ ranger-llm-ui/
 │   ├── ui_node.py              # Entry point: Gradio UI + ROS 2 node
 │   ├── agent_interface.py      # RangerAgent class (wraps ROSA)
 │   ├── ranger_prompts.py       # Ranger-specific prompts for the agent
+│   ├── scenarios.py            # Scenario file parser + loader (leaf module)
+│   ├── scenario_runner.py      # Sequential step runner + AI safety supervisor
 │   ├── tools/
 │   │   ├── movement_tools.py   # Movement: MoveForward, TurnAngle, etc.
 │   │   ├── status_tools.py     # Status: BatteryStatus, SystemHealth, etc.
@@ -140,6 +142,9 @@ ranger-llm-ui/
 ├── ros2_numpy/                 # NumPy conversions for ROS 2 (submodule)
 ├── config/
 │   └── default_config.yaml     # Configuration: LLM, safety limits, topics
+├── scenarios/                  # Pre-made scenarios (prompt files, line-by-line)
+│   ├── *.txt                   # One command per line; '#' = comment/metadata
+│   └── README.md               # Scenario file format + safety policies
 ├── launch/
 │   └── ranger_llm_ui.launch.py # ROS 2 launch file
 ├── tests/                      # pytest test suite
@@ -432,6 +437,57 @@ The system is both a Python package AND a ROS 2 package:
 
 **Simulation Mode:**
 Run without ROS 2 using `--simple` flag for testing.
+
+### 8. Scenario Runner (Pre-made Scenarios)
+
+The **Scenarios** tab lets an operator pick a pre-made *scenario* — a plain-text
+*prompt file fed line-by-line* — and run it. Each non-comment line is sent to the
+agent in order, with conversation context carried across steps (the UI
+equivalent of looping `claude -p "$prompt" --continue` over a `prompts.txt`). It
+streams a live transcript with a progress bar and per-step state, plus a
+**two-layer safety net**.
+
+**Modules:**
+- [scenarios.py](ranger_llm_ui/scenarios.py) — leaf module (no agent/ROS deps):
+  `Scenario` dataclass, `parse_scenario_text`/`parse_scenario_file`,
+  `load_scenarios`, `scenarios_dir` (env override `SCENARIOS_DIR`), and the
+  `POLICY_*` constants. File format: `# key: value` metadata headers (`title`,
+  `description`, `safety`, `fresh_context`) + one command per line; see
+  [scenarios/README.md](scenarios/README.md).
+- [scenario_runner.py](ranger_llm_ui/scenario_runner.py) — `run_scenario()` is a
+  generator yielding event dicts (decoupled from the UI). It enforces safety:
+  1. **Heuristic tripwire** (`looks_like_error`): a cheap, no-LLM scan of each
+     step's output for failure signals (1 strong or ≥2 weak markers).
+  2. **AI safety supervisor** (`SafetySupervisor`): under the `supervise`
+     policy, a flagged step is adjudicated by an LLM that returns
+     `ok | retry | mitigate | abort` (+ one corrective instruction for
+     mitigate). It reuses the agent's own LLM via `RangerAgent.get_llm()`; in
+     `--simple` mode (no LLM) `supervise` degrades to a fail-safe `stop`.
+
+**Safety policies** (`# safety:` metadata / "On step error" radio): `stop`
+(default — halt + emergency stop), `supervise` (LLM mitigates/aborts), `continue`
+(log only; manual e-stop). **Any** abort, stop, or EMERGENCY STOP (from any tab)
+calls the same `RangerUINode.emergency_stop()`, which zeroes `/cmd_vel` and sets
+the shared `_scenario_stop` flag so a run halts between steps.
+
+**UI wiring note:** the Run flow is a Gradio generator
+(`run_scenario_stream`); Pause/Resume/Stop/E-stop are separate handlers that run
+concurrently with it (independent Gradio concurrency groups) and toggle shared
+`threading.Event`s. Stop/E-stop also `cancels=[scenario_run_event]`.
+
+Add a scenario by dropping a `*.txt` file in `scenarios/` and clicking
+**↻ Reload** (no code change needed). Packaged via `setup.py` `data_files` into
+`share/ranger_llm_ui/scenarios`.
+
+**Known limitation (pre-existing, system-wide):** `emergency_stop()` cancels the
+active ROS goal and zeroes `/cmd_vel`, but does **not** latch the
+`SafetyGuard.emergency_stop_active` flag. So a STOP pressed *mid-step* takes full
+effect only at the next step boundary — the agent's still-running `invoke()`
+could issue one more motion goal before the scenario halts (the chat tab has the
+identical property). Latching the guard on E-stop (and clearing it on the next
+deliberate command) would close this, but it changes shared safety-critical
+behavior for *all* movement paths and deserves its own reviewed change rather
+than riding on this feature.
 
 ## Running the Project
 

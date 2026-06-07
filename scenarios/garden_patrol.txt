@@ -1,0 +1,16 @@
+# title: Garden Perimeter Patrol
+# description: Drive a small 1m square patrol using relative moves, checking battery before and after.
+# safety: stop
+# fresh_context: true
+
+Check your battery level. If it is below 20 percent, warn me and recommend charging instead of patrolling.
+Reset your odometry so your current position becomes the origin.
+Move forward 1 meter.
+Turn left 90 degrees.
+Move forward 1 meter.
+Turn left 90 degrees.
+Move forward 1 meter.
+Turn left 90 degrees.
+Move forward 1 meter.
+Turn left 90 degrees.
+Report your final odometry pose and how close you are to where you started.

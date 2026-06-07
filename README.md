@@ -5,6 +5,7 @@ LLM-driven natural language operator interface for the Ranger garden robot.
 ## Features
 
 - **Natural Language Control**: Control the robot using conversational commands like "move forward 1 meter" or "turn left 90 degrees"
+- **Pre-made Scenarios**: Pick a multi-step scenario (a prompt file fed line-by-line) from the UI and run it with a built-in safety net that stops — or lets the LLM recover — when a step goes wrong
 - **Safety First**: Built-in safety guards with velocity limits, distance validation, and emergency stop
 - **Multiple LLM Backends**: OpenAI, Ollama (local), Anthropic API, and **Claude Pro/Max subscription via OAuth** (no API key needed)
 - **Voice I/O (optional)**: Hands-free speech-to-text mic input (faster-whisper) and spoken replies (Piper / Kokoro / espeak-ng) — fully local, no cloud key
@@ -288,6 +289,28 @@ The UI provides manual teleop buttons for direct control:
 - Arrow buttons for movement
 - Emergency stop button (always visible)
 - Battery status display
+
+### Scenarios (run a pre-made command sequence)
+
+The **Scenarios** tab runs a *scenario* — a plain-text "prompt file fed
+line-by-line": each line is sent to the robot in order, with context carried
+across steps (the UI equivalent of looping `claude -p "$prompt" --continue`).
+Pick one from the dropdown, review the steps, tweak them under **✎ Edit
+scenario**, and press **▶ Run**. Progress, per-step status, and a live transcript
+stream on the right.
+
+A **safety net** decides what happens when a step looks like it failed:
+
+| Policy ("On step error") | Behavior |
+|--------------------------|----------|
+| **Stop on error** (default) | A heuristic tripwire halts the run and triggers an emergency stop. |
+| **AI supervisor** | An LLM adjudicates the failure and may confirm success, retry, mitigate with one corrective instruction, or abort (→ emergency stop). Falls back to *Stop on error* with no LLM (`--simple`). |
+| **Run all** | Log issues but never auto-halt — only the manual **EMERGENCY STOP** stops the robot. |
+
+**⏸ Pause / ⏹ Stop / 🛑 EMERGENCY STOP** controls are always live, and an
+emergency stop from any tab halts a running scenario. Add your own by dropping a
+`*.txt` file in [`scenarios/`](scenarios/README.md) and clicking **↻ Reload**
+(or point `SCENARIOS_DIR` at another folder).
 
 ## Configuration
 

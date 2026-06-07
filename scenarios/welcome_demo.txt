@@ -1,0 +1,13 @@
+# title: Welcome & Self-Check
+# description: A gentle, movement-free introduction — the robot greets you and reports its own status.
+# safety: stop
+# fresh_context: true
+#
+# Lines starting with '#' are comments/metadata. Every other non-empty line is
+# one command, sent to the robot in order with shared conversation context.
+
+Introduce yourself in one short, friendly sentence as Ranger, the garden robot.
+Report your current battery level and whether you are charging.
+Run a system health check and tell me in one line whether everything looks healthy.
+Tell me your current position from odometry.
+Give me a single-sentence summary of whether you are ready to start working.

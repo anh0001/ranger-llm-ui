@@ -26,6 +26,9 @@ setup(
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.py')),
         (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
+        # Pre-made scenarios (prompt files fed line-by-line) for the Scenarios tab.
+        (os.path.join('share', package_name, 'scenarios'),
+            glob('scenarios/*.txt') + glob('scenarios/*.scenario')),
     ],
     install_requires=[
         'setuptools',

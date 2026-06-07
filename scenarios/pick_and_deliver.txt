@@ -1,0 +1,10 @@
+# title: Pick & Deliver Demo
+# description: Localize an object, pick it up, and hand it to a person. Needs the arm + manipulation stack.
+# safety: supervise
+# fresh_context: true
+
+Raise your arm to the ready pose.
+Where is the bottle? Use the wrist camera.
+Pick up the bottle.
+Hand the bottle over to the person in front of you.
+Park your arm at the rest pose and confirm the task is complete.

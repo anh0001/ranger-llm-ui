@@ -1,0 +1,10 @@
+# title: System Diagnostics Sweep
+# description: Inspect the ROS 2 graph and robot health without moving — safe to run anytime.
+# safety: supervise
+# fresh_context: true
+
+List the active ROS 2 nodes.
+List the available ROS 2 topics.
+Report your battery status.
+Run a full system health check.
+Summarize anything that looks wrong or missing in one short paragraph.

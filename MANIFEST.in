@@ -1,0 +1,6 @@
+# Include pre-made scenarios (prompt files fed line-by-line) in source dists.
+# They are installed via setup.py data_files into share/ranger_llm_ui/scenarios;
+# this ensures they also travel in the sdist tarball.
+recursive-include scenarios *.txt *.scenario *.md
+include config/*.yaml
+include launch/*.py
