@@ -140,6 +140,10 @@ class TestLooksLikeError:
         "The service is not available right now.",
         "Request timed out after 60 seconds.",
         "Failed to connect, could not reach the server",  # 2 weak markers
+        # Polite, solution-offering robot-action failures (single weak marker
+        # otherwise) — now caught by the strengthened strong-marker set.
+        "The pick failed — the banana wasn't detected or the grasp pose was out of workspace.",
+        "I need to pick up the bottle first. I'm not currently holding anything.",
     ])
     def test_flags_failures(self, text):
         assert looks_like_error(text) is True
@@ -180,6 +184,19 @@ class _FakeLLM:
     def invoke(self, messages):
         self.calls.append(messages)
         return _FakeMessage(self._content)
+
+
+class _ScriptedLLM:
+    """Fake chat model whose reply depends on the prompt (the robot output is
+    embedded in the final HumanMessage), so it can react to success vs. failure
+    like a real supervisor that judges every step."""
+
+    def __init__(self, decide):
+        self._decide = decide  # callable(human_text:str) -> json str
+
+    def invoke(self, messages):
+        human = messages[-1].content
+        return _FakeMessage(self._decide(human))
 
 
 class TestSafetySupervisor:
@@ -311,10 +328,15 @@ class TestRunScenario:
 
         sc = Scenario("t", "T", "", ["boom step"])
         estop = Mock()
-        llm = _FakeLLM('{"action":"mitigate","reason":"recoverable","fix":"Back up 0.3 meters"}')
+
+        # Mitigate while the report shows an error; once recovered, judge ok.
+        def decide(human):
+            if "error" in human.lower():
+                return '{"action":"mitigate","reason":"recoverable","fix":"Back up 0.3 meters"}'
+            return '{"action":"ok","reason":"done","fix":""}'
         events = list(run_scenario(
             sc, invoke=invoke, emergency_stop=estop, policy=POLICY_SUPERVISE,
-            supervisor=SafetySupervisor(llm), max_attempts=2,
+            supervisor=SafetySupervisor(_ScriptedLLM(decide)), max_attempts=2,
         ))
         kinds = _kinds(events)
         assert "recovery" in kinds
@@ -346,6 +368,43 @@ class TestRunScenario:
         # called for the step (boom) + the mitigation (Back up) only.
         starts = [e for e in events if e["kind"] == "step_start"]
         assert len(starts) == 1  # only the initial attempt; no post-mitigation retry
+
+    def test_supervise_judges_every_step_even_when_unflagged(self):
+        # A polite "I didn't do it, want me to try X?" with NO error markers
+        # passes the heuristic, but supervise mode must still consult the LLM,
+        # which catches the failure. (This is the pick_and_deliver bug.)
+        unflagged = "Sure, would you like me to try something else instead?"
+        assert looks_like_error(unflagged) is False  # heuristic does NOT flag it
+
+        sc = Scenario("t", "T", "", ["Pick up the banana."])
+        estop = Mock()
+        llm = _FakeLLM('{"action":"abort","reason":"step not completed","fix":""}')
+        events = list(run_scenario(
+            sc, invoke=lambda p: {"output": unflagged, "intermediate_steps": []},
+            emergency_stop=estop, policy=POLICY_SUPERVISE,
+            supervisor=SafetySupervisor(llm),
+        ))
+        kinds = _kinds(events)
+        assert "supervisor" in kinds            # consulted despite no flag
+        assert kinds[-1] == "aborted"
+        estop.assert_called_once()
+        sup = next(e for e in events if e["kind"] == "supervisor")
+        assert sup["flagged"] is False          # heuristic really didn't flag it
+
+    def test_supervise_unflagged_ok_completes(self):
+        # Clean successes are judged ok on every step and the run completes.
+        sc = Scenario("t", "T", "", ["a", "b"])
+        estop = Mock()
+        llm = _FakeLLM('{"action":"ok","reason":"completed","fix":""}')
+        events = list(run_scenario(
+            sc, invoke=lambda p: {"output": "Done, moved forward 1 meter.",
+                                  "intermediate_steps": []},
+            emergency_stop=estop, policy=POLICY_SUPERVISE,
+            supervisor=SafetySupervisor(llm),
+        ))
+        assert _kinds(events)[-1] == "done"
+        assert sum(1 for e in events if e["kind"] == "supervisor") == 2  # per step
+        estop.assert_not_called()
 
     def test_supervise_abort_triggers_estop(self):
         def invoke(prompt):

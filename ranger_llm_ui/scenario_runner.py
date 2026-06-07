@@ -70,6 +70,28 @@ _STRONG_ERROR_MARKERS = (
     "could not connect",
     "no such tool",
     "tool not found",
+    # High-precision robot-action failure phrasings. These often arrive in a
+    # polite, solution-offering sentence ("The pick failed — the object wasn't
+    # detected…") that carries only one generic weak marker, so call them out
+    # explicitly. Each is specific enough to rarely appear in a success report.
+    "pick failed",
+    "place failed",
+    "grasp failed",
+    "handover failed",
+    "failed to pick",
+    "failed to place",
+    "failed to grasp",
+    "failed to detect",
+    "out of workspace",
+    "out of the workspace",
+    "out of reach",
+    "wasn't detected",
+    "was not detected",
+    "not currently holding",
+    "i'm not holding",
+    "i am not holding",
+    "need to pick up",
+    "nothing to hand",
 )
 # Weaker signals: only treated as a failure when two or more co-occur, to keep
 # benign phrasing ("I could not find any obstacles, all clear") from tripping.
@@ -148,15 +170,24 @@ class Verdict:
 
 _SUPERVISOR_SYSTEM = """You are the SAFETY SUPERVISOR for an autonomous run of a \
 Ranger garden robot. The robot executes a scenario as a list of natural-language \
-steps, one at a time. After a step whose result looks like it may have FAILED, \
-you are shown the step instruction and the robot's own report of what happened, \
-and you decide how to proceed SAFELY.
+steps, one at a time. After EACH step you are shown the step instruction and the \
+robot's own report of what happened, and you judge whether the step actually \
+SUCCEEDED and, if not, how to proceed SAFELY.
+
+Read the robot's report carefully — it is often phrased politely even when the \
+action did NOT happen. Treat as a FAILURE any report that: says an action failed \
+or could not be done; says the target was not detected / out of reach / out of \
+workspace; reports the robot is not holding an object it was supposed to hold; \
+asks the operator a question or proposes alternatives INSTEAD of completing the \
+step; or otherwise does not confirm the step was carried out. A status/lookup step \
+(e.g. reporting a position or battery) succeeds if it returns the information.
 
 Reply with ONLY a single JSON object, no prose, no code fences:
 {"action": "ok|retry|mitigate|abort", "reason": "<short>", "fix": "<instruction or empty>"}
 
 Definitions:
-- "ok": the step actually succeeded; the failure signal was a false alarm. Continue.
+- "ok": the step genuinely succeeded. Continue. (Most steps succeed — use "ok" \
+unless there is a clear sign the action did not happen.)
 - "retry": a transient/benign problem; re-run the SAME step. Put a clearer \
 rephrasing of the step in "fix", or leave "fix" empty to repeat it verbatim.
 - "mitigate": the step failed but is safely recoverable. "fix" MUST be ONE \
@@ -193,17 +224,28 @@ class SafetySupervisor:
         output: str,
         step_index: int = 0,
         total: int = 0,
+        flagged: bool = False,
     ) -> Verdict:
-        """Ask the LLM to classify a flagged step and propose a safe recovery."""
+        """Ask the LLM to judge a step and propose a safe recovery if it failed.
+
+        ``flagged`` passes the cheap heuristic's opinion as a hint; the LLM is
+        the authority and may overrule it in either direction.
+        """
         if self._llm is None:
             return Verdict(ACTION_ABORT, "No safety supervisor LLM available.")
 
+        hint = (
+            "An automatic keyword check flagged this output as a POSSIBLE failure."
+            if flagged
+            else "An automatic keyword check did not flag this output, but judge it yourself."
+        )
         human = (
             f"Scenario: {scenario_title}\n"
             f"Step {step_index + 1}"
             + (f" of {total}" if total else "")
             + f": {step}\n\n"
             f"Robot's report of the result:\n\"\"\"\n{output.strip()}\n\"\"\"\n\n"
+            f"{hint}\n"
             "Decide: did this step succeed, and if not, how should the robot "
             "proceed safely? Respond with the JSON object only."
         )
@@ -377,27 +419,35 @@ def run_scenario(
                 recovery=attempt > 0,
             )
 
-            if not flagged:
-                outcome = "recovered" if attempt > 0 else "ok"
-                break
-
-            # --- a failure was detected ------------------------------------
-            if policy == POLICY_CONTINUE:
-                yield _event(
-                    "info",
-                    text="Issue detected, but policy is **Run all** — continuing.",
-                )
-                outcome = "failed"
-                break
-
-            if policy == POLICY_STOP or not supervisor_ok:
+            # In supervise mode the LLM is the authority and judges EVERY step
+            # (not just heuristic-flagged ones) — polite failure reports like
+            # "the pick failed, want me to try PickAt?" carry no strong marker
+            # and would otherwise slip through as success. The heuristic gate is
+            # only used for the no-LLM stop/continue paths.
+            if not supervisor_ok:
+                if not flagged:
+                    outcome = "recovered" if attempt > 0 else "ok"
+                    break
+                if policy == POLICY_CONTINUE:
+                    yield _event(
+                        "info",
+                        text="Issue detected, but policy is **Run all** — continuing.",
+                    )
+                    outcome = "failed"
+                    break
+                # stop policy, or supervise requested but no LLM available
                 outcome = "abort"
-                abort_reason = "Step reported an error (Stop-on-error policy)."
+                abort_reason = (
+                    "Step reported an error (Stop-on-error policy)."
+                    if policy == POLICY_STOP
+                    else "Step reported an error and no AI supervisor is available."
+                )
                 break
 
-            # --- supervise: ask the LLM how to recover ---------------------
+            # --- supervise: the LLM judges this step and how to recover -----
             verdict = supervisor.judge(
-                scenario.title, original, output, step_index=idx, total=total
+                scenario.title, original, output,
+                step_index=idx, total=total, flagged=flagged,
             )
             yield _event(
                 "supervisor",
@@ -405,6 +455,7 @@ def run_scenario(
                 action=verdict.action,
                 reason=verdict.reason,
                 fix=verdict.fix,
+                flagged=flagged,
             )
 
             if verdict.action == ACTION_OK:

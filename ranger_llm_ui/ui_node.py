@@ -737,10 +737,16 @@ class RangerUINode:
 
             if kind == "supervisor":
                 action = ev.get("action", "")
-                emoji = {"ok": "✅", "retry": "🔁", "mitigate": "🩹", "abort": "🛑"}.get(action, "🛡️")
-                msg = f"🛡️ **Safety supervisor:** {emoji} `{action}` — {ev.get('reason', '')}"
-                if ev.get("fix"):
-                    msg += f"\n\n> {ev['fix']}"
+                reason = ev.get("reason", "")
+                if action == "ok":
+                    # The supervisor checks every step in supervise mode; keep
+                    # the routine "looks good" verdicts unobtrusive.
+                    msg = f"<sub>🛡️ supervisor: ✓ verified{(' — ' + reason) if reason else ''}</sub>"
+                else:
+                    emoji = {"retry": "🔁", "mitigate": "🩹", "abort": "🛑"}.get(action, "🛡️")
+                    msg = f"🛡️ **Safety supervisor:** {emoji} `{action}` — {reason}"
+                    if ev.get("fix"):
+                        msg += f"\n\n> {ev['fix']}"
                 history.append({"role": "assistant", "content": msg})
                 yield history, self._scenario_status_md(total, counters, "running", current), self._steps_view_md(scenario, current, statuses)
                 continue
