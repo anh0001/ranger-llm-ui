@@ -180,7 +180,12 @@ or could not be done; says the target was not detected / out of reach / out of \
 workspace; reports the robot is not holding an object it was supposed to hold; \
 asks the operator a question or proposes alternatives INSTEAD of completing the \
 step; or otherwise does not confirm the step was carried out. A status/lookup step \
-(e.g. reporting a position or battery) succeeds if it returns the information.
+(e.g. reporting a position or battery) succeeds if it returns the information. A \
+MANIPULATION step (pick / pick up / grasp / place / hand over / park the arm) \
+succeeds ONLY if the report confirms the PHYSICAL action happened — e.g. \
+"grasped", "now holding it", "placed", "handed over", "arm parked". A camera \
+image, a scene description, or "I can see the <object>" is NOT a completed pick — \
+treat it as a failure (the robot looked instead of acting).
 
 Reply with ONLY a single JSON object, no prose, no code fences:
 {"action": "ok|retry|mitigate|abort", "reason": "<short>", "fix": "<instruction or empty>"}

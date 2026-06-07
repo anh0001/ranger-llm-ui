@@ -1,10 +1,10 @@
 # title: Pick & Deliver Demo
-# description: Localize an object, pick it up, and hand it to a person. Needs the arm + manipulation stack.
+# description: Locate an object, grasp it at that 3D position with PickAt, then hand it to a person. Needs the arm + manipulation stack.
 # safety: supervise
 # fresh_context: true
 
 Raise your arm to the ready pose.
 Where is the banana? Use the wrist camera.
-Pick up the banana.
-Hand the bottle over to the person in front of you.
+Now grasp the banana by calling the PickAt skill with the exact x, y, z coordinates you found in the previous step (pick at that known position — do not re-detect or just take a photo).
+Confirm you are actually holding the banana, then hand it over to the person in front of you.
 Park your arm at the rest pose and confirm the task is complete.
