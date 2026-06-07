@@ -6,5 +6,5 @@
 Raise your arm to the ready pose.
 Where is the banana? Use the wrist camera.
 Now grasp the banana by calling the PickAt skill with the exact x, y, z coordinates you found in the previous step (pick at that known position — do not re-detect or just take a photo).
-Confirm you are actually holding the banana, then hand it over to the person in front of you.
+Confirm you are actually holding the banana, then hand it over to the person in front of you using rear camera.
 Park your arm at the rest pose and confirm the task is complete.
