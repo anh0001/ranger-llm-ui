@@ -259,24 +259,47 @@ class SafetySupervisor:
                 ]
             )
             text = content_to_text(getattr(response, "content", response))
-            return self._parse_verdict(text)
+            verdict = self._parse_verdict(text)
+            if verdict is not None:
+                return verdict
+            # Reply could not be parsed. Default depends on the heuristic prior:
+            # only abort if the step was actually flagged as suspicious; a clean
+            # step should not be emergency-stopped over a formatting glitch.
+            logger.warning(
+                "Safety supervisor reply was not parseable (flagged=%s); raw=%r",
+                flagged, (text or "")[:300],
+            )
+            return self._unclear_verdict(flagged, "reply unclear")
         except Exception as e:  # pragma: no cover - network/LLM failure path
             logger.warning("Safety supervisor LLM call failed: %s", e)
-            return Verdict(
-                ACTION_ABORT, f"Supervisor unavailable ({e}); stopping for safety."
-            )
+            return self._unclear_verdict(flagged, f"supervisor unavailable ({e})")
 
     @staticmethod
-    def _parse_verdict(text: str) -> Verdict:
-        """Parse the supervisor's reply into a :class:`Verdict`, defensively.
+    def _unclear_verdict(flagged: bool, why: str) -> Verdict:
+        """Fail-safe verdict when the supervisor's opinion can't be determined.
 
-        Falls back to keyword sniffing if strict JSON parsing fails, and to a
-        fail-safe ``abort`` if even that is ambiguous (the supervisor is only
-        consulted on already-suspicious steps).
+        Flagged (already-suspicious) step -> abort; otherwise the step looked
+        fine, so continue rather than nuke a good run on a glitch.
+        """
+        if flagged:
+            return Verdict(ACTION_ABORT, f"Step looked wrong and supervisor {why}; stopping.")
+        return Verdict(ACTION_OK, f"Step looked fine; supervisor {why}; continuing.")
+
+    @staticmethod
+    def _parse_verdict(text: str) -> Optional[Verdict]:
+        """Parse the supervisor's reply into a :class:`Verdict`.
+
+        Returns ``None`` if no action can be determined (the caller then applies
+        a heuristic-aware fail-safe), rather than guessing ``abort``.
         """
         text = (text or "").strip()
-        # Try to locate the first {...} JSON object.
-        match = re.search(r"\{.*\}", text, re.DOTALL)
+        if not text:
+            return None
+        # Drop markdown code fences so the JSON inside is reachable.
+        cleaned = re.sub(r"```(?:json)?", "", text)
+
+        # 1) First well-formed {...} JSON object.
+        match = re.search(r"\{.*\}", cleaned, re.DOTALL)
         if match:
             try:
                 data = json.loads(match.group(0))
@@ -287,17 +310,36 @@ class SafetySupervisor:
                         reason=str(data.get("reason", "")).strip(),
                         fix=str(data.get("fix", "")).strip(),
                     )
-            except (json.JSONDecodeError, AttributeError):
+            except (json.JSONDecodeError, AttributeError, TypeError):
                 pass
 
-        # Fallback: keyword sniff on the raw text.
-        low = text.lower()
-        for action in (ACTION_ABORT, ACTION_MITIGATE, ACTION_RETRY, ACTION_OK):
-            if action in low:
-                return Verdict(action, "Parsed from non-JSON supervisor reply.")
-        return Verdict(
-            ACTION_ABORT, "Could not parse supervisor reply; stopping for safety."
+        # 2) Loosely pull "action": "<x>" out of malformed JSON.
+        m = re.search(
+            r'"?action"?\s*[:=]\s*"?(ok|retry|mitigate|abort)\b',
+            cleaned, re.IGNORECASE,
         )
+        if m:
+            rm = re.search(r'"?reason"?\s*[:=]\s*"([^"]*)"', cleaned, re.IGNORECASE)
+            fm = re.search(r'"?fix"?\s*[:=]\s*"([^"]*)"', cleaned, re.IGNORECASE)
+            return Verdict(
+                m.group(1).lower(),
+                rm.group(1).strip() if rm else "Parsed from loose supervisor reply.",
+                fm.group(1).strip() if fm else "",
+            )
+
+        # 3) Last resort: prose keyword sniff (word-boundary, abort first).
+        low = cleaned.lower()
+        sniff = (
+            (ACTION_ABORT, r"\babort\b|\bunsafe\b|\bemergency stop\b"),
+            (ACTION_MITIGATE, r"\bmitigat"),
+            (ACTION_RETRY, r"\bretry\b|\btry again\b"),
+            (ACTION_OK, r"\bok\b|\bokay\b|\bsucceed|\bsucceeded\b|\bsuccess\b|"
+                        r"\bcompleted\b|\blooks good\b|\ball good\b"),
+        )
+        for action, pattern in sniff:
+            if re.search(pattern, low):
+                return Verdict(action, "Parsed from prose supervisor reply.")
+        return None
 
 
 def _event(kind: str, **data: Any) -> dict:

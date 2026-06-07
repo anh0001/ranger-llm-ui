@@ -225,10 +225,28 @@ class TestSafetySupervisor:
         v = SafetySupervisor(llm).judge("t", "s", "o")
         assert v.action == ACTION_ABORT
 
-    def test_unparseable_defaults_to_abort(self):
+    def test_unparseable_is_flagged_aware(self):
+        # An unparseable reply continues a clean (unflagged) step but aborts a
+        # flagged (already-suspicious) one — never nuke a good run on a glitch.
         llm = _FakeLLM("completely unrelated text with no decision")
-        v = SafetySupervisor(llm).judge("t", "s", "o")
-        assert v.action == ACTION_ABORT
+        sup = SafetySupervisor(llm)
+        assert sup.judge("t", "s", "o", flagged=False).action == ACTION_OK
+        assert sup.judge("t", "s", "o", flagged=True).action == ACTION_ABORT
+
+    def test_llm_exception_is_flagged_aware(self):
+        class _BoomLLM:
+            def invoke(self, messages):
+                raise RuntimeError("network down")
+        sup = SafetySupervisor(_BoomLLM())
+        assert sup.judge("t", "s", "o", flagged=False).action == ACTION_OK
+        assert sup.judge("t", "s", "o", flagged=True).action == ACTION_ABORT
+
+    def test_parses_loose_and_fenced_json(self):
+        # Code-fenced JSON and slightly-malformed JSON still parse.
+        v1 = SafetySupervisor(_FakeLLM('```json\n{"action": "mitigate", "fix": "Back up"}\n```')).judge("t", "s", "o")
+        assert v1.action == ACTION_MITIGATE and v1.fix == "Back up"
+        v2 = SafetySupervisor(_FakeLLM("action: abort, reason: unsafe")).judge("t", "s", "o", flagged=True)
+        assert v2.action == ACTION_ABORT
 
 
 # --------------------------------------------------------------------------
@@ -404,6 +422,22 @@ class TestRunScenario:
         ))
         assert _kinds(events)[-1] == "done"
         assert sum(1 for e in events if e["kind"] == "supervisor") == 2  # per step
+        estop.assert_not_called()
+
+    def test_supervise_unparseable_reply_does_not_abort_clean_step(self):
+        # Regression: a successful (unflagged) step whose supervisor reply can't
+        # be parsed must CONTINUE, not emergency-stop the run.
+        sc = Scenario("t", "T", "", ["Raise arm to ready pose.", "Park the arm."])
+        estop = Mock()
+        llm = _FakeLLM("uh, sure thing")  # no JSON, no action keywords
+        events = list(run_scenario(
+            sc,
+            invoke=lambda p: {"output": "The arm is now at the ready pose.",
+                              "intermediate_steps": []},
+            emergency_stop=estop, policy=POLICY_SUPERVISE,
+            supervisor=SafetySupervisor(llm),
+        ))
+        assert _kinds(events)[-1] == "done"
         estop.assert_not_called()
 
     def test_supervise_abort_triggers_estop(self):
