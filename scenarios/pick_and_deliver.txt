@@ -4,7 +4,7 @@
 # fresh_context: true
 
 Raise your arm to the ready pose.
-Where is the bottle? Use the wrist camera.
-Pick up the bottle.
+Where is the banana? Use the wrist camera.
+Pick up the banana.
 Hand the bottle over to the person in front of you.
 Park your arm at the rest pose and confirm the task is complete.
