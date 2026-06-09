@@ -123,9 +123,10 @@ Your ROS 2 system runs on the robot's onboard computer. You communicate via:
   the arm/wrist camera, 'rear' = the fixed camera behind my arm (read on demand,
   not a continuous stream)
 - /execute_skill action for arm manipulation skills (pick, place, pick_and_place,
-  arm_home_pose, arm_ready_pose, handover) and the localize_object skill (3D
-  object positions, via LocateObject) — served by the MobileManipulationCore
-  skill server
+  arm_home_pose, arm_ready_pose, handover), the look_at skill (aim the wrist
+  camera at a point, via LookAt) and the localize_object skill (3D object
+  positions, via LocateObject) — served by the MobileManipulationCore skill
+  server
 - Various other sensor and diagnostic topics
 """.strip(),
 
@@ -228,6 +229,15 @@ PERCEPTION CAPABILITIES:
   'wrist' (the camera on my arm/wrist — use for "show the wrist cam"), or 'rear'
   (the fixed camera mounted behind my arm). Whenever the operator asks to see a
   view, call this with the matching camera name.
+- LookAt(x, y, z, frame?, standoff_m?): Aim my wrist camera (D405) at a GIVEN 3D
+  point so that point lands in the wrist camera's view. This is the precondition
+  for LocateObject(camera='wrist') when the target isn't already in view: point
+  the camera at roughly where I expect the object, then localize. By default I
+  only re-orient from the current camera position; pass standoff_m > 0 to also
+  move the camera that far from the point (use it when the point is out of the
+  wrist camera's reach). Needs MoveIt running (it solves IK to aim). If the arm
+  is parked low, ReadyArm first. Use for "point the wrist camera at the table",
+  "look at that spot then tell me what's there".
 - LocateObject(objects, camera?): Find WHERE one or more named objects are in 3D
   and report each object's (x, y, z) position in metres relative to my base
   (base_footprint). This locates OBJECTS in the scene — it is NOT about where *I*
@@ -235,7 +245,8 @@ PERCEPTION CAPABILITIES:
   Detects each object by open-vocabulary name through a depth camera:
   camera='wrist' (the D405 on my arm — most accurate, but the object must be in
   the wrist camera's view, so I should raise the arm with ReadyArm first if it is
-  parked) or camera='rear' (the fixed D435i behind my arm). Pass several objects
+  parked, or aim the wrist camera with LookAt when I roughly know where to look)
+  or camera='rear' (the fixed D435i behind my arm). Pass several objects
   comma-separated to locate them in one call. Use for "where is the banana?",
   "what is the 3D position of the red cup and the bottle from the rear camera?".
   The wrist camera gives a TF-accurate answer; rear-camera coordinates are

@@ -79,8 +79,8 @@ codes/                              # parent workspace (e.g. /home/robofi/codes)
   autonomy) are sibling stacks that both run on top of the same
   `ranger-garden-assistant` base. This UI's **manipulation tools** (`Pick`,
   `Place`, `PickAndPlace`, `HomeArm`, `ReadyArm`, `Handover`) and its
-  object-localization **perception tool** (`LocateObject`, backed by MMC's
-  `localize_object` skill — 3D position of named objects) — see
+  **perception tools** (`LookAt` — aim the wrist camera at a point; and
+  `LocateObject` — 3D position of named objects; both backed by MMC skills) — see
   [Tool System](#2-tool-system)) drive MMC's skill server directly via its
   generic `manipulation_msgs/action/ExecuteSkill` action on `/execute_skill`.
   At runtime this requires:
@@ -275,6 +275,37 @@ action name with `EXECUTE_SKILL_ACTION`. See
   fallback (`localize_vlm_fallback` + `ANTHROPIC_API_KEY`) supplies a pixel when
   the detector finds nothing. Requires the same MMC skill_server + the Grounding
   DINO detector; simulated in `--simple` mode.
+
+**Wrist-Camera Aiming Tool** ([manipulation_tools.py](ranger_llm_ui/tools/manipulation_tools.py)):
+- `LookAtTool` (tool name `LookAt`) - **aim the wrist D405 at a given 3D point**
+  so that point lands in the wrist camera's view. This is the *precondition* for
+  `LocateObject(camera='wrist')` when the target isn't already framed by the
+  fixed `ReadyArm` look-down pose: point the camera at roughly where the object
+  is, then localize. Input: `x, y, z` (`base_footprint` by default, `frame`
+  optional) and `standoff_m` (0 = re-orient from the current camera position;
+  `>0` = first move the camera that far from the point along the line back toward
+  the current camera, then aim). Skill-backed (drives MMC's `look_at` over the
+  same `/execute_skill` action). Because it **actuates the arm**, it is
+  grouped/gated with the manipulation tools (`ENABLE_MANIPULATION_TOOLS`) even
+  though it serves perception; simulated in `--simple` mode.
+- The `look_at` skill (MMC:
+  `manipulation_policy/skills/look_at_skill.py`) is a genuine 6-DOF
+  Cartesian-orientation move, so unlike the position-only at-pose skills it solves
+  real **inverse kinematics**: it builds the camera-optical orientation whose +Z
+  (REP-104 optical forward) points from the camera at the target, converts that
+  optical pose to the wrist TCP (`piper_tcp`) pose via the static
+  `piper_camera_optical_frame`←`piper_tcp` TF, then calls **MoveIt's
+  `/compute_ik`** (`GetPositionIK`, group `piper_arm`, seeded from `/joint_states`)
+  and executes the joint solution with the same `move_arm_to` the other skills
+  use. The free camera roll is sampled (upright first) to lift KDL's IK hit rate
+  and keep the image level, and a joint-step guard rejects solutions that would
+  require a large open-loop sweep (raise the arm / reduce standoff instead).
+  **Extra runtime requirement beyond the other skills:** MoveIt `move_group` must
+  be running (it is, by default — garden-assistant `launch_moveit:=true`) so
+  `/compute_ik` is available, and MMC's `manipulation_policy` must have
+  `moveit_msgs` sourced; absent either, `LookAt` returns a clear error (the IK
+  helper degrades gracefully). Override the service with the
+  `compute_ik_service` server param. Simulated in `--simple` mode.
 
 **Tool Registry** ([all_tools.py](ranger_llm_ui/tools/all_tools.py)):
 - Central registry for all tools
@@ -718,7 +749,7 @@ Anh Nguyen - anh0001@example.com
 
 ---
 
-**Last Updated:** 2026-06-06
+**Last Updated:** 2026-06-09
 **Codebase Version:** 0.1.0
 <!-- ARIS:BEGIN -->
 ## ARIS Skill Scope

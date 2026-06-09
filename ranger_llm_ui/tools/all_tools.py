@@ -54,6 +54,7 @@ from ranger_llm_ui.tools.manipulation_tools import (
     HomeArmTool,
     ReadyArmTool,
     HandoverTool,
+    LookAtTool,
     LocateObjectTool,
     get_manipulation_tools,
     get_perception_skill_tools,
@@ -100,7 +101,7 @@ TOOL_CATEGORIES = {
         ),
         "tools": [
             "Pick", "Place", "PickAndPlace", "PickAt", "PlaceAt", "PickAndPlaceAt",
-            "HomeArm", "ReadyArm", "Handover",
+            "HomeArm", "ReadyArm", "Handover", "LookAt",
         ],
     },
 }
@@ -122,7 +123,8 @@ def get_all_tools(
         include_diagnostics: Include diagnostic tools (ListNodes, etc.)
         include_perception: Include perception tools (GetCameraImage)
         include_manipulation: Include manipulation/skill tools (Pick, Place,
-            PickAndPlace, HomeArm, ReadyArm, Handover). Defaults to the
+            PickAndPlace, HomeArm, ReadyArm, Handover, LookAt — LookAt aims the
+            wrist camera and so actuates the arm). Defaults to the
             ENABLE_MANIPULATION_TOOLS env flag (on unless set to false).
 
     Returns:
@@ -174,6 +176,9 @@ def get_all_tools(
             HomeArmTool(),
             ReadyArmTool(),
             HandoverTool(),
+            # Actuates the arm (aims the wrist camera), so gated with the
+            # manipulation tools though it is a perception precondition.
+            LookAtTool(),
         ])
 
     logger.info(f"Loaded {len(tools)} tools: {[t.name for t in tools]}")

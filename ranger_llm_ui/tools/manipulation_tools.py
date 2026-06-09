@@ -602,6 +602,24 @@ class PickAndPlaceAtInput(BaseModel):
     )
 
 
+class LookAtInput(BaseModel):
+    """Input schema for the LookAt tool."""
+    x: float = Field(description="X (forward, metres) of the point to look at.")
+    y: float = Field(description="Y (left, metres) of the point to look at.")
+    z: float = Field(description="Z (up, metres) of the point to look at.")
+    frame: str = Field(
+        default="base_footprint",
+        description="TF frame of the point (default base_footprint).",
+    )
+    standoff_m: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="If > 0, first move the wrist camera to this distance (metres) "
+                    "from the point, then aim at it. 0 (default) only re-aims from "
+                    "the current camera position.",
+    )
+
+
 class LocateObjectInput(BaseModel):
     """Input schema for the LocateObject tool."""
     objects: str = Field(
@@ -1081,9 +1099,45 @@ class LocateObjectTool(_SkillToolBase):
         return result
 
 
+class LookAtTool(_SkillToolBase):
+    """Aim the wrist camera at a 3D point so it can see that point."""
+
+    name: str = "LookAt"
+    skill_name: str = "look_at"
+    description: str = (
+        "Aim my wrist camera (the D405 on the arm) at a GIVEN 3D point so that "
+        "point comes into the wrist camera's view. This is the precondition for "
+        "LocateObject with camera='wrist' on a target that isn't already framed "
+        "by the default raised pose. The point is (x, y, z) in metres in "
+        "base_footprint by default (x forward, y left, z up). By default I only "
+        "re-orient the camera from where it is; pass standoff_m > 0 to first move "
+        "the camera that far from the point (use it when the point is out of the "
+        "wrist camera's reach). CHAIN: LookAt(x, y, z) then "
+        "LocateObject(camera='wrist'). If the arm is parked low, ReadyArm first. "
+        "Input: x, y, z, optional frame, optional standoff_m."
+    )
+    args_schema: Type[BaseModel] = LookAtInput
+
+    def _run(self, x: float, y: float, z: float, frame: str = "base_footprint",
+             standoff_m: float = 0.0,
+             run_manager: Optional[CallbackManagerForToolRun] = None) -> str:
+        params: Dict[str, Any] = {
+            "position": [float(x), float(y), float(z)],
+            "frame": frame,
+            "standoff_m": float(standoff_m),
+        }
+        return self._dispatch(params, timeout_s=_skill_timeout(0.0), log_params=params)
+
+
 # Convenience function to create all manipulation tools
 def get_manipulation_tools() -> list[BaseTool]:
-    """Get all manipulation-related tools (one per MMC skill)."""
+    """Get all manipulation-related tools (one per MMC skill).
+
+    LookAt is included here (not in the perception tools) because it ACTUATES the
+    arm — so it is enabled/disabled together with the other arm tools via
+    ENABLE_MANIPULATION_TOOLS, even though it serves perception (aiming the wrist
+    camera before LocateObject).
+    """
     return [
         PickTool(),
         PlaceTool(),
@@ -1094,11 +1148,16 @@ def get_manipulation_tools() -> list[BaseTool]:
         HomeArmTool(),
         ReadyArmTool(),
         HandoverTool(),
+        LookAtTool(),
     ]
 
 
 def get_perception_skill_tools() -> list[BaseTool]:
-    """Skill-backed perception tools (object localization via the skill server)."""
+    """Skill-backed perception tools (object localization via the skill server).
+
+    Note: LookAt is a perception *precondition* but lives with the manipulation
+    tools (see get_manipulation_tools) because it moves the arm.
+    """
     return [
         LocateObjectTool(),
     ]

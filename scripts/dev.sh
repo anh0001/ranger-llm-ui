@@ -26,6 +26,8 @@
 #
 # Environment overrides (all optional):
 #   PYTHONUSERBASE   isolated install dir (default: $HOME/.local/ranger_llm_ui_py310)
+#   SCENARIOS_DIR    scenario *.txt folder the UI loads (default: repo scenarios/,
+#                    so edits show after "↻ Reload" with no rebuild)
 #   ROS_DISTRO       ROS 2 distro to source (default: humble)
 #   CLIPROXY_DIR     CLIProxyAPI checkout (default: $HOME/tools/cliproxyapi)
 #   MMC_INSTALL      MobileManipulationCore install/ to overlay so manipulation
@@ -47,6 +49,12 @@ CLIPROXY_DIR="${CLIPROXY_DIR:-$HOME/tools/cliproxyapi}"
 if [[ -z "${MMC_INSTALL+x}" && -f "$REPO_ROOT/../MobileManipulationCore/install/setup.bash" ]]; then
   MMC_INSTALL="$(cd "$REPO_ROOT/../MobileManipulationCore/install" && pwd)"
 fi
+
+# Load scenarios from the live repo `scenarios/` folder, not the colcon-installed
+# copy under share/, so editing a *.txt + clicking "↻ Reload" in the UI is enough
+# (no rebuild). SCENARIOS_DIR is consulted first and exclusively by
+# ranger_llm_ui.scenarios.scenarios_dir(). Override to point elsewhere.
+export SCENARIOS_DIR="${SCENARIOS_DIR:-$REPO_ROOT/scenarios}"
 
 _site="$PYTHONUSERBASE/lib/python3.10/site-packages"
 export PYTHONPATH="$_site${PYTHONPATH:+:$PYTHONPATH}"

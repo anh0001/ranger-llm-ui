@@ -534,6 +534,7 @@ class TestAllTools:
         assert len(status_tools) == 3
 
         perception_tools = get_tools_by_category("perception")
+        # GetCameraImage + LocateObject (LookAt actuates the arm -> manipulation)
         assert len(perception_tools) == 2
 
         with pytest.raises(ValueError):

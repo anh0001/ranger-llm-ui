@@ -1,0 +1,11 @@
+# title: Obu Demo Move
+# description: Navigate using movetopse to certain position in front of a table from robot home base.
+# safety: stop
+# fresh_context: true
+
+Zero odometry.
+Park your arm at the zero pose.
+Use MoveToPose to go to the odometry-frame pose X=1.076 m, Y=0.234 m, heading 75.2°.
+Use MoveToPose to go to the odometry-frame pose X=1.189 m, Y=0.661 m, heading 75.2°.
+Park your arm at the ready pose.
+Check current odom
