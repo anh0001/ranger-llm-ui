@@ -5,7 +5,6 @@
 
 Zero odometry.
 Park your arm at the zero pose.
-Use MoveToPose to go to the odometry-frame pose X=1.076 m, Y=0.234 m, heading 75.2°.
-Use MoveToPose to go to the odometry-frame pose X=1.189 m, Y=0.661 m, heading 75.2°.
+Use MoveToPose to go to the odometry-frame pose X=1.076 m, Y=0.234 m, heading 86.5°.
+Use MoveToPose to go to the odometry-frame pose X=1.076 m, Y=0.817 m, heading 86.5°.
 Park your arm at the ready pose.
-Check current odom

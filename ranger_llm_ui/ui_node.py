@@ -548,12 +548,19 @@ class RangerUINode:
         """Dropdown change handler: populate editor/preview/options."""
         return self._scenario_detail_updates(self._find_scenario(title))
 
-    def reload_scenarios(self):
-        """Re-scan the scenarios directory and refresh the picker + preview."""
+    def reload_scenarios(self, current_title: Optional[str] = None):
+        """Re-scan the scenarios directory and refresh the picker + preview.
+
+        Preserves the currently-selected scenario when it still exists after the
+        reload, so editing a `.txt` + clicking **↻ Reload** shows the updated
+        steps in place (instead of silently jumping the picker to the first
+        scenario and looking like nothing changed)."""
         self._scenarios = load_scenarios()
         titles = self._scenario_titles()
-        value = titles[0] if titles else None
-        sc = self._scenarios[0] if self._scenarios else None
+        sc = self._find_scenario(current_title) if current_title else None
+        if sc is None:
+            sc = self._scenarios[0] if self._scenarios else None
+        value = sc.title if sc else None
         return (gr.update(choices=titles, value=value),) + self._scenario_detail_updates(sc)
 
     def pause_scenario(self):
@@ -1287,7 +1294,7 @@ class RangerUINode:
             # Reload re-scans the scenarios/ folder and refreshes everything.
             reload_scenarios_btn.click(
                 fn=self.reload_scenarios,
-                inputs=None,
+                inputs=[scenario_dropdown],
                 outputs=[
                     scenario_dropdown,
                     scenario_editor,

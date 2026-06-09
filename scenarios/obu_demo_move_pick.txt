@@ -1,0 +1,15 @@
+# title: Obu Demo Move and Pick
+# description: Navigate using movetopse to certain position in front of a table from robot home base, then pick the object.
+# safety: supervise
+# fresh_context: true
+
+Zero odometry.
+Park your arm at the zero pose.
+Use MoveToPose to go to the odometry-frame pose X=1.076 m, Y=0.234 m, heading 86.5°.
+Use MoveToPose to go to the odometry-frame pose X=1.076 m, Y=0.817 m, heading 86.5°.
+
+Raise your arm to the ready pose.
+Where is the banana? Use the wrist camera.
+Now grasp the banana by calling the PickAt skill with the exact x, y, z coordinates you found in the previous step (pick at that known position — do not re-detect or just take a photo).
+Hand it over to the person in front of you using the rear camera.
+Park your arm at the rest pose and confirm the task is complete.
